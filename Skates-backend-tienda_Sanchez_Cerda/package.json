@@ -1,0 +1,13 @@
+{
+  "name": "skates-local-stack",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "backend": "./mvnw.cmd spring-boot:run",
+    "backend:test": "./mvnw.cmd test",
+    "frontend:tienda": "cd Skates-tienda-main && npm install && npm run dev -- --host 0.0.0.0 --port 5173",
+    "frontend:admin": "cd Skates-admin && npm install && npm run dev -- --host 0.0.0.0 --port 5174",
+    "build:frontends": "cd Skates-tienda-main && npm install && npm run build && cd ../Skates-admin && npm install && npm run build",
+    "setup": "npm install && cd Skates-tienda-main && npm install && cd ../Skates-admin && npm install"
+  }
+}
