@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { obtenerCatalogo, agregarSkate, actualizarSkate, eliminarSkate, type Skate } from './api'
-import { cerrarSesion, iniciarSesion } from './auth'
+import { useCognitoAuth, tieneGrupoAdministrador } from './auth'
 import './App.css'
 
 type Pedido = {
@@ -20,12 +20,11 @@ const pedidosDemoIniciales: Pedido[] = [
 ]
 
 export default function App() {
+  const auth = useCognitoAuth()
+  const autenticado = auth.isAuthenticated && tieneGrupoAdministrador(auth.accessToken)
   const [activeTab, setActiveTab] = useState<'products' | 'orders'>('products')
   const [skates, setSkates] = useState<Skate[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [usuario, setUsuario] = useState('')
-  const [clave, setClave] = useState('')
-  const [autenticado, setAutenticado] = useState(() => Boolean(localStorage.getItem('skates-token')))
   const [errorLogin, setErrorLogin] = useState<string | null>(null)
 
   // Estados para modales y formularios de productos
@@ -61,6 +60,10 @@ export default function App() {
     const bajoStock = skates.filter((skate) => (skate.stock ?? 0) <= 5).length
     return { totalStock, modelos, bajoStock }
   }, [skates])
+
+  if (auth.isLoading) {
+    return <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', backgroundColor: '#0f172a', color: '#f8fafc' }}>Cargando sesión...</main>
+  }
 
   const abrirModalCrear = () => {
     setModoEdicion(false)
@@ -103,8 +106,8 @@ export default function App() {
 
       setModalAbierto(false)
       cargarInventario()
-    } catch (err: any) {
-      alert(err.message || 'Error al guardar el producto en el backend')
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Error al guardar el producto en el backend')
     }
   }
 
@@ -113,8 +116,8 @@ export default function App() {
     try {
       await eliminarSkate(id)
       cargarInventario()
-    } catch (err: any) {
-      alert(err.message || 'No se pudo eliminar el producto')
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'No se pudo eliminar el producto')
     }
   }
 
@@ -125,47 +128,30 @@ export default function App() {
   if (!autenticado) {
     return (
       <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', backgroundColor: '#0f172a', color: '#f8fafc' }}>
-        <form 
-          onSubmit={(event) => { 
-            event.preventDefault(); 
-            iniciarSesion(usuario, clave)
-              .then(() => setAutenticado(true))
-              .catch((loginError: Error) => setErrorLogin(loginError.message)); 
-          }} 
-          style={{ width: 'min(400px, 90vw)', padding: '36px', backgroundColor: '#1e293b', borderRadius: '14px', border: '1px solid #334155', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.4)' }}
-        >
-          <p style={{ color: '#f97316', fontWeight: 700, fontSize: '12px', letterSpacing: '1px', marginBottom: '8px' }}>SKATES ADMIN LOCAL</p>
+        <section style={{ width: 'min(400px, 90vw)', padding: '36px', backgroundColor: '#1e293b', borderRadius: '14px', border: '1px solid #334155', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.4)' }}>
+          <p style={{ color: '#f97316', fontWeight: 700, fontSize: '12px', letterSpacing: '1px', marginBottom: '8px' }}>SKATES ADMIN</p>
           <h1 style={{ fontSize: '24px', marginBottom: '24px', color: '#f8fafc' }}>Acceso de administrador</h1>
-          
-          <div style={{ marginBottom: '16px' }}>
-            <input 
-              value={usuario} 
-              onChange={(event) => setUsuario(event.target.value)} 
-              placeholder='Usuario' 
-              style={{ display: 'block', width: '100%', padding: '12px 14px', boxSizing: 'border-box', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc', fontSize: '14px', outline: 'none' }} 
-            />
-          </div>
-
-          <div style={{ marginBottom: '20px' }}>
-            <input 
-              type='password' 
-              value={clave} 
-              onChange={(event) => setClave(event.target.value)} 
-              placeholder='Contraseña' 
-              style={{ display: 'block', width: '100%', padding: '12px 14px', boxSizing: 'border-box', backgroundColor: '#0f172a', border: '1px solid #334155', borderRadius: '8px', color: '#f8fafc', fontSize: '14px', outline: 'none' }} 
-            />
-          </div>
-
+          <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '20px' }}>Inicia sesión con una cuenta del grupo Cognito ADMIN.</p>
+          {auth.isAuthenticated && !autenticado && <p style={{ color: '#fca5a5', fontSize: '13px', marginBottom: '12px' }}>Tu cuenta no pertenece al grupo Cognito ADMIN.</p>}
+          {(auth.error?.message || errorLogin) && <p style={{ color: '#fca5a5', fontSize: '13px', marginBottom: '12px' }}>{auth.error?.message || errorLogin}</p>}
+          {auth.isAuthenticated && !autenticado && (
+            <button
+              type='button'
+              onClick={() => auth.cerrarSesion().catch((logoutError: Error) => setErrorLogin(logoutError.message))}
+              style={{ width: '100%', padding: '12px', backgroundColor: '#334155', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', fontSize: '15px', cursor: 'pointer', marginBottom: '12px' }}
+            >
+              Cerrar sesión de Cognito
+            </button>
+          )}
           <button 
-            type='submit' 
+            type='button'
+            onClick={() => auth.iniciarSesion().catch((loginError: Error) => setErrorLogin(loginError.message))}
             style={{ width: '100%', padding: '12px', backgroundColor: '#f97316', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '600', fontSize: '15px', cursor: 'pointer', transition: 'background 0.2s', marginBottom: '16px' }}
           >
-            Entrar
+            Continuar con Cognito
           </button>
 
-          {errorLogin && <p style={{ color: '#fca5a5', fontSize: '13px', marginBottom: '12px' }}>{errorLogin}</p>}
-          <small style={{ color: '#94a3b8', fontSize: '12px', display: 'block', textAlign: 'center' }}>Demo local: admin / admin123</small>
-        </form>
+        </section>
       </main>
     )
   }
@@ -236,7 +222,9 @@ export default function App() {
             <span style={{ width: '8px', height: '8px', backgroundColor: '#22c55e', borderRadius: '50%', display: 'inline-block' }}></span>
             <button 
               type='button' 
-              onClick={() => { cerrarSesion(); setAutenticado(false) }} 
+              onClick={() => {
+                auth.cerrarSesion().catch((authError: Error) => setErrorLogin(authError.message))
+              }} 
               style={{ fontSize: '13px', padding: '4px 10px', background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontWeight: '600' }}
             >
               Salir
@@ -333,7 +321,7 @@ export default function App() {
                         <span style={{ fontSize: '13px', color: '#94a3b8' }}>Estado:</span>
                         <select 
                           value={pedido.estado} 
-                          onChange={(e) => cambiarEstadoPedido(pedido.id, e.target.value as any)}
+                          onChange={(e) => cambiarEstadoPedido(pedido.id, e.target.value as Pedido['estado'])}
                           style={{ backgroundColor: '#1e293b', color: '#fff', border: '1px solid #334155', padding: '6px 10px', borderRadius: '6px', outline: 'none' }}
                         >
                           <option value="Pendiente">Pendiente</option>

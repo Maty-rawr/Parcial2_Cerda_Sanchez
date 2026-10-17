@@ -65,27 +65,99 @@ También puedes probar todos los métodos con Postman usando la URL base `http:/
 
 ## Autenticación
 
-La API usa tokens JWT. El login es público y devuelve un token válido durante una hora.
+Los dos frontends usan AWS Amplify Auth con Amazon Cognito Hosted UI mediante Authorization Code y PKCE; no se necesita un client secret en el navegador. La API valida firma, emisor, expiración, tipo de token y `client_id`. Los scopes `skate-api/read` y `skate-api/write` autorizan lectura y escritura. Además, las operaciones que modifican productos requieren que el usuario pertenezca al grupo Cognito `ADMIN`.
 
-### Usuarios de desarrollo
+### Configuración de Cognito
 
-| Usuario | Contraseña | Rol |
-| --- | --- | --- |
-| `cliente` | `cliente123` | `CLIENTE` |
-| `admin` | `admin123` | `ADMIN` |
-
-Solicita un token:
+1. Usa el User Pool `us-east-1_AOH2j7aTl` y el dominio `https://us-east-1aoh2j7atl.auth.us-east-1.amazoncognito.com`.
+2. Usa los App Clients públicos de tienda `7vge2gthmumgohfn84aepg41qh` y admin `2ndve0vjmlau9as43sapcmermb` (sin client secret); habilita OAuth 2.0 Authorization Code Grant.
+3. Registra en cada App Client las callback y logout URLs exactas de su frontend. En desarrollo, la tienda usa `https://localhost:5173/` y administración usa `https://localhost:5174/`; agrega también las URLs HTTPS de producción cuando estén disponibles.
+4. Crea el grupo `ADMIN` en el User Pool y agrega a él las cuentas que administrarán el inventario. Las demás cuentas pueden iniciar sesión en la tienda, pero no modificar productos.
+5. Configura el resource server y agrega `skate-api/read` y `skate-api/write` a ambos App Clients. El script conserva los demás scopes y opciones existentes de cada cliente:
 
 ```powershell
-$login = Invoke-RestMethod `
-	-Method Post `
-	-Uri "http://localhost:8080/api/auth/login" `
-	-ContentType "application/json" `
-	-Body '{"username":"admin","password":"admin123"}'
-
-$token = $login.token
-$token
+.\scripts\configure-cognito-scopes.ps1
 ```
+
+El script requiere AWS CLI con región y credenciales configuradas localmente, y permisos para listar resource servers, describir App Clients y crear o actualizar la configuración Cognito. No imprime ni almacena credenciales.
+
+6. Configura el backend antes de ejecutarlo:
+
+```powershell
+$env:COGNITO_ISSUER_URI="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_AOH2j7aTl"
+$env:COGNITO_CLIENT_IDS="7vge2gthmumgohfn84aepg41qh,2ndve0vjmlau9as43sapcmermb"
+$env:CORS_ALLOWED_ORIGINS="https://localhost:5173,https://localhost:5174"
+./mvnw.cmd spring-boot:run
+```
+
+`COGNITO_ISSUER_URI` es el issuer del User Pool, no el dominio Hosted UI. No incluyas secretos en el código fuente.
+
+7. En cada frontend, copia `.env.example` a `.env.local`. Amplify usa `VITE_COGNITO_USER_POOL_ID`, `VITE_COGNITO_CLIENT_ID`, `VITE_COGNITO_DOMAIN`, `VITE_COGNITO_REDIRECT_URI` y `VITE_COGNITO_LOGOUT_URI`; las URLs de retorno deben coincidir exactamente con las registradas para ese App Client.
+
+El access token se envía automáticamente como `Authorization: Bearer <token>` a la API. Para probar endpoints protegidos desde Postman, inicia sesión desde uno de los frontends y usa el access token de Cognito. La API no emite tokens locales ni acepta el antiguo endpoint de credenciales de demostración.
+
+### Pruebas públicas con ngrok y API Gateway
+
+Esta configuración crea un HTTP API de API Gateway en AWS que reenvía las solicitudes a la API Spring Boot local a través de su túnel ngrok. **No despliega Spring Boot en AWS**: el backend debe seguir ejecutándose en tu equipo y ngrok debe permanecer activo. No uses este túnel de desarrollo como alojamiento de producción.
+
+Requisitos: ngrok CLI autenticado, AWS CLI configurado con una región y permisos para crear/actualizar APIs HTTP y stacks de CloudFormation. El uso de API Gateway puede generar cargos según la cuenta y el tráfico.
+
+1. Configura ngrok una vez con tu authtoken: `ngrok config add-authtoken <TOKEN>`. Para publicar tienda, admin y API con hostnames separados, necesitas dominios ngrok reservados distintos y configurar cada `domain` en [ngrok.yml](./infra/ngrok.yml); ngrok puede asignar el mismo dominio gratuito a todos los túneles y el script se detendrá si detecta esa colisión. Como alternativa para pruebas, inicia solo el túnel `tienda` y usa el proxy Vite configurado para publicar el backend en `/api/**` y el panel en `/admin/**` bajo ese mismo hostname; consulta los README de los frontends para iniciar ambos modos ngrok. Inicia Spring Boot en `8080` y los frontends en `5173` y `5174`. El modo `ngrok` sirve HTTP local mientras ngrok termina HTTPS, y `NGROK_HOST` debe contener el hostname exacto permitido por Vite.
+2. Desde PowerShell, inicia los túneles:
+
+   ```powershell
+   .\scripts\start-ngrok.ps1
+   ```
+
+   El script imprime las URLs públicas HTTPS `api`, `tienda` y `admin`, y deja activo el agente ngrok.
+3. Reinicia Spring Boot con CORS limitado a los dos orígenes públicos y los datos actuales de Cognito:
+
+   ```powershell
+   $env:COGNITO_ISSUER_URI="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_AOH2j7aTl"
+   $env:COGNITO_CLIENT_IDS="7vge2gthmumgohfn84aepg41qh,2ndve0vjmlau9as43sapcmermb"
+   $env:CORS_ALLOWED_ORIGINS="<URL-TIENDA>,<URL-ADMIN>"
+   $env:H2_CONSOLE_ENABLED="false"
+   .\mvnw.cmd spring-boot:run
+   ```
+
+4. Despliega API Gateway desde otra consola PowerShell en la carpeta del backend:
+
+   ```powershell
+   .\scripts\deploy-api-gateway-ngrok.ps1 `
+     -NgrokBackendUrl "<URL-API>" `
+     -StorefrontOrigin "<URL-TIENDA>" `
+     -AdminOrigin "<URL-ADMIN>"
+   ```
+
+   El script despliega [api-gateway-ngrok.yaml](./infra/api-gateway-ngrok.yaml) en la región activa de AWS CLI e imprime el endpoint de API Gateway.
+5. Registra las URLs exactas `"<URL-TIENDA>/"` y `"<URL-ADMIN>/"` como callback y logout URLs en sus respectivos App Clients de Cognito. En cada frontend, establece `VITE_API_URL` con el endpoint que imprimió el script, y `VITE_COGNITO_REDIRECT_URI` y `VITE_COGNITO_LOGOUT_URI` con la URL ngrok de esa aplicación más `/`; luego inicia o reinicia Vite. En PowerShell, define cada `$env:VITE_...` en la consola del frontend antes de ejecutar `npm run dev`. Las URLs temporales ngrok cambian al reiniciar; actualiza Cognito y vuelve a desplegar API Gateway si cambian. Los dominios ngrok reservados evitan tener que actualizar las URLs en cada sesión.
+6. Prueba el catálogo a través de API Gateway:
+
+   ```powershell
+   Invoke-RestMethod -Uri "<URL-API-GATEWAY>/api/skate" -Headers @{ Authorization = "Bearer <ACCESS_TOKEN>" }
+   ```
+
+   La lectura requiere un access token con `skate-api/read`; las operaciones de escritura requieren además `skate-api/write` y, para gestionar skates, el grupo `ADMIN`.
+
+El API Gateway añade el encabezado requerido para reenviar solicitudes al túnel gratuito de ngrok y define CORS para los dos orígenes indicados al desplegar. No guardes authtokens de ngrok ni credenciales AWS en el repositorio.
+
+### API Gateway con dos integraciones
+
+La plantilla [api-gateway-microservices.yaml](./infra/api-gateway-microservices.yaml) enruta `/api/skate/**` al servicio de catálogo y `/api/inventory/**`, `/api/payments/**` y `/api/pago/**` al servicio de inventario. Para desplegarla, los dos servicios deben estar ejecutándose y accesibles por HTTPS:
+
+```powershell
+.\scripts\deploy-api-gateway-microservices.ps1 `
+  -CatalogBackendUrl "https://<url-catalogo>" `
+  -InventoryBackendUrl "https://<url-inventario>" `
+  -StorefrontOrigin "https://<url-tienda>" `
+  -AdminOrigin "https://<url-admin>"
+```
+
+Esta plantilla solo configura API Gateway; no crea ni separa aplicaciones Spring Boot. El backend de este repositorio continúa siendo una aplicación monolítica en `8080`, por lo que todavía no se debe desplegar la plantilla de dos integraciones hasta disponer de servicios de catálogo e inventario separados. La plantilla anterior `api-gateway-ngrok.yaml` sigue siendo la opción para probar ese backend monolítico.
+
+Esta configuración cubre Cognito y autorización. La persistencia continúa usando H2 por ahora; EC2 es infraestructura de cómputo, no un motor de base de datos. La migración de base de datos requiere elegir un motor compatible y configurar sus credenciales fuera del código fuente.
+
+Las solicitudes de lectura requieren un access token con el scope `skate-api/read`. Las operaciones de escritura requieren `skate-api/write`; además, crear, actualizar o eliminar skates requiere pertenecer al grupo Cognito `ADMIN`. La API responde `401` si falta un token válido y `403` si el token no tiene el scope o rol requerido.
 
 En Postman, agrega el encabezado a las operaciones protegidas:
 
@@ -93,7 +165,7 @@ En Postman, agrega el encabezado a las operaciones protegidas:
 Authorization: Bearer <token>
 ```
 
-Los `GET` de skates son públicos. Las operaciones `POST`, `PUT` y `DELETE` requieren el rol `ADMIN`.
+Los `GET` de la API requieren `skate-api/read`. Las operaciones `POST`, `PUT` y `DELETE` de skates requieren `skate-api/write` y el grupo `ADMIN`.
 
 ## Endpoints
 
@@ -101,19 +173,19 @@ Los `GET` de skates son públicos. Las operaciones `POST`, `PUT` y `DELETE` requ
 
 | Método | URL | Acceso | Descripción |
 | --- | --- | --- | --- |
-| `POST` | `/api/auth/login` | Público | Genera un token JWT. |
+| `GET` | `/api/auth/me` | Autenticado | Devuelve la identidad del usuario Cognito autenticado. |
 
 ### Skates
 
 | Método | URL | Acceso | Descripción |
 | --- | --- | --- | --- |
-| `GET` | `/api/skate` | Público | Lista todos los productos. |
-| `GET` | `/api/skate/{id}` | Público | Obtiene un producto por ID. |
-| `GET` | `/api/skate/modelos` | Público | Lista los modelos sin repetir. |
-| `GET` | `/api/skate/modelo/{modelo}` | Público | Filtra por modelo, sin distinguir mayúsculas. |
-| `POST` | `/api/skate` | ADMIN | Crea un producto. |
-| `PUT` | `/api/skate/{id}` | ADMIN | Actualiza un producto. |
-| `DELETE` | `/api/skate/{id}` | ADMIN | Elimina un producto. |
+| `GET` | `/api/skate` | Scope `skate-api/read` | Lista todos los productos. |
+| `GET` | `/api/skate/{id}` | Scope `skate-api/read` | Obtiene un producto por ID. |
+| `GET` | `/api/skate/modelos` | Scope `skate-api/read` | Lista los modelos sin repetir. |
+| `GET` | `/api/skate/modelo/{modelo}` | Scope `skate-api/read` | Filtra por modelo, sin distinguir mayúsculas. |
+| `POST` | `/api/skate` | Scope `skate-api/write` + grupo `ADMIN` | Crea un producto. |
+| `PUT` | `/api/skate/{id}` | Scope `skate-api/write` + grupo `ADMIN` | Actualiza un producto. |
+| `DELETE` | `/api/skate/{id}` | Scope `skate-api/write` + grupo `ADMIN` | Elimina un producto. |
 
 ### Pagos con Webpay Plus
 
@@ -127,10 +199,10 @@ El backend integra Webpay Plus usando el SDK oficial de Transbank en ambiente de
 
 | Método | URL | Acceso | Descripción |
 | --- | --- | --- | --- |
-| `POST` | `/api/payments/webpay/transactions` | Autenticado | Crea una transacción Webpay. |
+| `POST` | `/api/payments/webpay/transactions` | Scope `skate-api/write` | Crea una transacción Webpay. |
 | `POST` | `/api/payments/webpay/return` | Público | Recibe el retorno de Webpay y confirma el pago. |
-| `POST` | `/api/payments/webpay/commit?token_ws={token}` | Autenticado | Confirma manualmente una transacción. |
-| `GET` | `/api/payments/webpay/status?token_ws={token}` | Autenticado | Consulta el estado en Transbank. |
+| `POST` | `/api/payments/webpay/commit?token_ws={token}` | Scope `skate-api/write` | Confirma manualmente una transacción. |
+| `GET` | `/api/payments/webpay/status?token_ws={token}` | Scope `skate-api/read` | Consulta el estado en Transbank. |
 
 El backend valida que los productos existan al crear la transacción, pero no modifica el stock. El descuento se realiza únicamente después de una confirmación Webpay con `status = AUTHORIZED` y `response_code = 0`.
 
@@ -187,9 +259,11 @@ Las credenciales y el callback se configuran mediante variables de entorno:
 ```powershell
 $env:TRANSBANK_ENVIRONMENT="TEST"
 $env:TRANSBANK_COMMERCE_CODE="597055555532"
-$env:TRANSBANK_API_KEY_SECRET="579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C"
+$env:TRANSBANK_API_KEY_SECRET="<secreto configurado localmente desde Transbank>"
 $env:TRANSBANK_RETURN_URL="http://localhost:8080/api/payments/webpay/return"
 ```
+
+No guardes el secreto en `application.properties`, archivos `.env`, documentación ni control de versiones. Si no está configurado, el backend puede iniciar, pero las solicitudes de creación de pago devolverán un error explícito.
 
 Si ejecutas el backend en otro puerto, actualiza también `TRANSBANK_RETURN_URL`. Nunca uses las credenciales de integración en producción.
 
@@ -309,7 +383,7 @@ La consulta de simulación no valida que el stock sea mayor que cero. Si se ejec
 
 El backend permite solicitudes desde:
 
-- `http://localhost:5173`
+- `https://localhost:5173`
 - `http://localhost:5174`
 
 Los métodos permitidos son `GET`, `POST`, `PUT`, `DELETE` y `OPTIONS` para las rutas `/api/**`.
@@ -341,7 +415,7 @@ Las pruebas usan una base H2 en memoria (`jdbc:h2:mem:skates`), independiente de
 Los errores de validación y los productos inexistentes se devuelven como JSON con `timestamp` y `mensaje`.
 
 - `400 Bad Request`: datos inválidos.
-- `401 Unauthorized`: falta el token, el token expiró o las credenciales son incorrectas.
+- `401 Unauthorized`: falta el token, el token expiró o el token de Cognito no es válido.
 - `403 Forbidden`: el usuario autenticado no tiene rol `ADMIN`.
 - `404 Not Found`: el producto solicitado no existe.
 
@@ -381,3 +455,7 @@ Para simular el pago con la api Webpay se debe ingresar a la pagina:
 `https://www.transbankdevelopers.cl/documentacion/como_empezar#tarjetas-de-prueba`
 
 Usando el apartado de `Tarjetas de Prueba`
+
+Correo de cliente: cliente@gmail.com Contraseña: Cliente123.
+
+Correo de admin: admin@gmail.com Contraseña: Admin123.

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { obtenerCatalogo, obtenerPerfil, type Skate, type Usuario } from "./api";
-import { cerrarSesion, iniciarSesion } from "./auth";
+import { obtenerAccessToken, useCognitoAuth } from "./auth";
+import { config } from "./config";
 import "./App.css";
 
 const SLIDES = [
@@ -43,13 +44,12 @@ function mostrarPrecioClp(precio: number): string {
 }
 
 function App() {
+  const auth = useCognitoAuth();
+  const autenticado = auth.isAuthenticated;
   const [skates, setSkates] = useState<Skate[]>([]);
   const [modeloSeleccionado, setModeloSeleccionado] = useState("Todos");
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [usuario, setUsuario] = useState("");
-  const [clave, setClave] = useState("");
-  const [autenticado, setAutenticado] = useState(() => Boolean(localStorage.getItem("skates-token")));
   const [errorLogin, setErrorLogin] = useState<string | null>(null);
   const [mostrandoLogin, setMostrandoLogin] = useState(false);
   const [bannerActual, setBannerActual] = useState(0);
@@ -62,15 +62,17 @@ function App() {
 
   // Capturar el token_ws cuando Transbank redirige de vuelta al frontend
   useEffect(() => {
+    if (auth.isLoading) return;
+
     const params = new URLSearchParams(window.location.search);
     const tokenWs = params.get("token_ws");
 
     if (tokenWs) {
-      setProcesandoPago(true);
-      fetch(`http://localhost:8080/api/pago/commit?token_ws=${tokenWs}`, {
+      void Promise.resolve().then(() => setProcesandoPago(true));
+      fetch(`${config.apiUrl}/api/pago/commit?token_ws=${tokenWs}`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${localStorage.getItem("skates-token")}`
+          "Authorization": `Bearer ${obtenerAccessToken()}`
         }
       })
         .then(res => res.json())
@@ -93,7 +95,7 @@ function App() {
           window.history.replaceState({}, document.title, window.location.pathname); // Limpia la URL
         });
     }
-  }, []);
+  }, [auth.isLoading]);
 
   useEffect(() => {
     const intervalo = setInterval(() => {
@@ -103,40 +105,48 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!autenticado) {
-      setPerfil(null);
-      return;
-    }
+    if (!autenticado) return;
 
     obtenerPerfil()
       .then(setPerfil)
-      .catch(() => setPerfil({ username: usuario || "cliente" }));
-  }, [autenticado, usuario]);
+      .catch(() => setPerfil({ username: "cliente" }));
+  }, [autenticado]);
 
   useEffect(() => {
-    obtenerCatalogo()
-      .then((data) => {
-        setSkates(data);
-        setError(null);
-      })
-      .catch(() => {
-        setError("No se pudo cargar el catálogo. Verifica que el backend esté ejecutándose.");
-      })
-      .finally(() => {
+    if (auth.isLoading) return;
+    if (!autenticado) {
+      void Promise.resolve().then(() => {
         setCargando(false);
+        setError(null);
       });
-  }, []);
+      return;
+    }
 
-  const handleLoginSubmit = (event: React.FormEvent) => {
-    event.preventDefault();
-    iniciarSesion(usuario, clave)
-      .then(() => {
-        setAutenticado(true);
-        setMostrandoLogin(false);
-        setErrorLogin(null);
-      })
-      .catch(() => setErrorLogin("Credenciales inválidas"));
-  };
+    let active = true;
+    void Promise.resolve().then(async () => {
+      if (!active) return;
+      setCargando(true);
+      try {
+        const data = await obtenerCatalogo();
+        if (active) {
+          setSkates(data);
+          setError(null);
+        }
+      } catch (catalogError: unknown) {
+        if (active) {
+          setError(catalogError instanceof Error
+            ? catalogError.message
+            : "No se pudo cargar el catálogo. Verifica que el backend esté ejecutándose.");
+        }
+      } finally {
+        if (active) setCargando(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [auth.isLoading, autenticado]);
 
   const modelos = useMemo(
     () => ["Todos", ...Array.from(new Set(skates.map((skate) => skate.modelo)))],
@@ -149,7 +159,7 @@ function App() {
 
   const slideActual = SLIDES[bannerActual];
   const totalCarrito = carrito.reduce((total, skate) => total + obtenerPrecioClp(skate), 0);
-  const usuarioActual = perfil ?? { username: usuario || "cliente" };
+  const usuarioActual = autenticado && perfil ? perfil : { username: "cliente" };
 
   const agregarAlCarrito = (skate: Skate) => {
     if (!autenticado) {
@@ -178,11 +188,11 @@ function App() {
         quantity: 1 
       }));
 
-      const response = await fetch("http://localhost:8080/api/pago/iniciar", {
+      const response = await fetch(`${config.apiUrl}/api/pago/iniciar`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("skates-token")}`
+          "Authorization": `Bearer ${obtenerAccessToken()}`
         },
         body: JSON.stringify({
           amount: totalCarrito,
@@ -223,9 +233,12 @@ function App() {
 
   return (
     <div className="app-container">
+      {auth.error && !mostrandoLogin && !autenticado && (
+        <p className="error-message" role="alert">{auth.error.message}</p>
+      )}
       {mostrandoLogin && !autenticado && (
         <div className="login-overlay">
-          <form onSubmit={handleLoginSubmit} className="login-card">
+          <div className="login-card">
             <button 
               type="button" 
               onClick={() => setMostrandoLogin(false)}
@@ -234,39 +247,20 @@ function App() {
               ← Volver
             </button>
 
-            <p className="eyebrow accent" style={{ marginBottom: '8px' }}>SKATE SHOP LOCAL</p>
+            <p className="eyebrow accent" style={{ marginBottom: '8px' }}>SKATE SHOP</p>
             <h1 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '8px', color: '#ffffff', margin: '0 0 8px 0' }}>Acceso de clientes</h1>
-            <p style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '24px', marginTop: 0 }}>Inicia sesión para gestionar tu cuenta.</p>
-            
-            <div style={{ marginBottom: '14px' }}>
-              <input 
-                value={usuario} 
-                onChange={(e) => setUsuario(e.target.value)} 
-                placeholder="Usuario" 
-                className="login-input"
-              />
-            </div>
-
-            <div style={{ marginBottom: '20px' }}>
-              <input 
-                type="password" 
-                value={clave} 
-                onChange={(e) => setClave(e.target.value)} 
-                placeholder="Contraseña" 
-                className="login-input"
-              />
-            </div>
+            <p style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '24px', marginTop: 0 }}>Inicia sesión de forma segura con Amazon Cognito.</p>
 
             <button 
-              type="submit" 
+              type="button" 
+              onClick={() => auth.iniciarSesion().catch((authError: Error) => setErrorLogin(authError.message))}
               style={{ width: '100%', padding: '12px', backgroundColor: '#f97316', color: '#ffffff', border: 'none', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer', textTransform: 'uppercase', marginBottom: '16px', letterSpacing: '1.2px' }}
             >
-              Entrar
+              Continuar con Cognito
             </button>
 
-            {errorLogin && <p className="error-message" style={{ textAlign: 'center', marginBottom: '12px' }}>{errorLogin}</p>}
-            <small style={{ color: '#94a3b8', opacity: 0.6, fontSize: '12px', display: 'block', textAlign: 'center' }}>Demo local: cliente / cliente123</small>
-          </form>
+            {(auth.error?.message || errorLogin) && <p className="error-message" style={{ textAlign: 'center', marginBottom: '12px' }}>{auth.error?.message || errorLogin}</p>}
+          </div>
         </div>
       )}
 
@@ -286,7 +280,16 @@ function App() {
           {autenticado ? (
             <button 
               type="button" 
-              onClick={() => { cerrarSesion(); setAutenticado(false); setCarrito([]); setMostrandoCarrito(false); }}
+              onClick={() => {
+                auth.cerrarSesion()
+                  .then(() => {
+                    setCarrito([]);
+                    setMostrandoCarrito(false);
+                  })
+                  .catch((authError: Error) => {
+                    setErrorLogin(authError.message);
+                  });
+              }}
               style={{ fontSize: '11px', padding: '8px 16px', background: 'transparent', border: '1px solid #27272a', color: '#94a3b8', borderRadius: '8px', cursor: 'pointer', textTransform: 'uppercase' }}
             >
               Salir
@@ -478,7 +481,10 @@ function App() {
         {cargando && <p className="status-message">Cargando tablas y componentes...</p>}
         {error && <p className="status-message error-message">{error}</p>}
         
-        {!cargando && !error && skatesFiltrados.length === 0 && (
+        {!cargando && !error && !autenticado && (
+          <p className="status-message">Inicia sesión para consultar el catálogo protegido.</p>
+        )}
+        {!cargando && !error && autenticado && skatesFiltrados.length === 0 && (
           <p className="status-message">No hay productos disponibles para este filtro.</p>
         )}
 

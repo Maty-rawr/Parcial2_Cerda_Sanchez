@@ -2,6 +2,7 @@ package cl.duoc.backendskatesapp.controller;
 
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import cl.duoc.backendskatesapp.model.Skate;
@@ -40,17 +41,20 @@ public class SkateController {
     }
 
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.CREATED)
     public Skate crear(@Valid @RequestBody Skate nuevo) {
         return skateService.crear(nuevo);
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     public Skate actualizar(@PathVariable Long id, @Valid @RequestBody Skate datos) {
         return skateService.actualizar(id, datos);
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void eliminar(@PathVariable Long id) {
         skateService.eliminar(id);

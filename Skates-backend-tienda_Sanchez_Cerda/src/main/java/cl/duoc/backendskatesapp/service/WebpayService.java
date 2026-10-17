@@ -52,7 +52,7 @@ public class WebpayService {
             PaymentTransactionRepository paymentTransactionRepository,
             SkateRepository skateRepository,
             @Value("${transbank.commerce-code:597055555532}") String commerceCode,
-            @Value("${transbank.api-key-secret:579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C}") String apiKeySecret,
+            @Value("${transbank.api-key-secret:}") String apiKeySecret,
             @Value("${transbank.create-url:https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions}") String createUrl,
             @Value("${transbank.return-url:http://localhost:5173/}") String returnUrl) {
         
@@ -80,7 +80,7 @@ public class WebpayService {
         this.skateRepository = skateRepository;
         this.restClient = RestClient.create();
         this.commerceCode = "597055555532";
-        this.apiKeySecret = "579B532A7440BB0C9079DED94D31EA1615BACEB56610332264630D42D0A36B1C";
+        this.apiKeySecret = "test-only-not-a-secret";
         this.createUrl = "https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions";
         this.returnUrl = returnUrl;
     }
@@ -88,6 +88,9 @@ public class WebpayService {
     @Transactional
     public WebpayCreateResponse create(BigDecimal amount, String requestedSessionId, String username,
             List<WebpayItemRequest> requestedItems) {
+        if (apiKeySecret.isBlank()) {
+            throw new PaymentIntegrationException("Configura TRANSBANK_API_KEY_SECRET antes de iniciar pagos");
+        }
         if (amount == null || amount.signum() <= 0) {
             throw new IllegalArgumentException("El monto debe ser mayor que cero");
         }
@@ -195,7 +198,15 @@ public class WebpayService {
     private String decrementStock(PaymentTransaction paymentTransaction) {
         Map<Long, Integer> quantitiesBySkate = new TreeMap<>();
         for (PaymentTransactionItem item : paymentTransaction.getItems()) {
-            quantitiesBySkate.merge(item.getSkateId(), item.getQuantity(), Integer::sum);
+            Long skateId = item.getSkateId();
+            Integer quantity = item.getQuantity();
+            if (skateId == null || quantity == null || quantity <= 0) {
+                return "La transacción contiene un producto o una cantidad inválidos";
+            }
+            Integer existingQuantity = quantitiesBySkate.get(skateId);
+            quantitiesBySkate.put(
+                    skateId,
+                    existingQuantity == null ? quantity : Math.addExact(existingQuantity, quantity));
         }
 
         for (Map.Entry<Long, Integer> entry : quantitiesBySkate.entrySet()) {

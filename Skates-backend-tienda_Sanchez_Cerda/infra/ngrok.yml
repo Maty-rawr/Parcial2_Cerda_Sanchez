@@ -1,0 +1,15 @@
+version: "2"
+tunnels:
+  api:
+    proto: http
+    addr: 8080
+    # For a reserved ngrok domain, uncomment and set:
+    # domain: api-your-domain.ngrok.app
+  tienda:
+    proto: http
+    addr: 5173
+    # domain: tienda-your-domain.ngrok.app
+  admin:
+    proto: http
+    addr: 5174
+    # domain: admin-your-domain.ngrok.app

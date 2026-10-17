@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { obtenerAccessToken } from "./auth";
 
 export interface Skate {
   id: number;
@@ -18,15 +19,14 @@ export interface NuevoSkate {
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const token = localStorage.getItem("skates-token");
+  const token = await obtenerAccessToken();
+  const headers = new Headers(options.headers);
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
 
   return fetch(`${config.apiUrl}${path}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options.headers,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    headers,
   });
 }
 

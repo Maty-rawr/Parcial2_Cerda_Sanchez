@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: HTTP API Gateway proxy for the local Skates Spring Boot API exposed through ngrok.
+
+Parameters:
+  NgrokBackendUrl:
+    Type: String
+    Description: Public HTTPS URL of the ngrok tunnel forwarding to localhost:8080.
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+    ConstraintDescription: Provide the HTTPS origin only, without a path.
+  StorefrontOrigin:
+    Type: String
+    Description: Exact HTTPS origin of the storefront ngrok tunnel.
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+    ConstraintDescription: Provide the HTTPS origin without a trailing slash or path.
+  AdminOrigin:
+    Type: String
+    Description: Exact HTTPS origin of the admin ngrok tunnel.
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+    ConstraintDescription: Provide the HTTPS origin without a trailing slash or path.
+
+Resources:
+  SkatesApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: skates-ngrok-cloud-test
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref StorefrontOrigin
+          - !Ref AdminOrigin
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - authorization
+          - content-type
+          - ngrok-skip-browser-warning
+        MaxAge: 3600
+
+  NgrokProxyIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SkatesApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Ref NgrokBackendUrl
+      RequestParameters:
+        "overwrite:path": "$request.path"
+        "append:header.ngrok-skip-browser-warning": "'true'"
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkatesApi
+      RouteKey: "$default"
+      Target: !Sub "integrations/${NgrokProxyIntegration}"
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref SkatesApi
+      StageName: "$default"
+      AutoDeploy: true
+
+Outputs:
+  ApiUrl:
+    Description: Public base URL to configure as VITE_API_URL in both frontends.
+    Value: !GetAtt SkatesApi.ApiEndpoint

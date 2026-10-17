@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: HTTP API Gateway routes catalog and inventory/payment paths to separate services.
+
+Parameters:
+  CatalogBackendUrl:
+    Type: String
+    Description: HTTPS origin for the catalog Spring Boot service, without a path.
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+    ConstraintDescription: Provide an HTTPS origin only, without a path.
+  InventoryBackendUrl:
+    Type: String
+    Description: HTTPS origin for the inventory Spring Boot service, without a path.
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+    ConstraintDescription: Provide an HTTPS origin only, without a path.
+  StorefrontOrigin:
+    Type: String
+    Description: Exact HTTPS origin of the storefront.
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+  AdminOrigin:
+    Type: String
+    Description: Exact HTTPS origin of the admin frontend.
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?$"
+
+Resources:
+  SkatesApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: skates-microservices-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref StorefrontOrigin
+          - !Ref AdminOrigin
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - authorization
+          - content-type
+          - ngrok-skip-browser-warning
+        MaxAge: 3600
+
+  CatalogIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SkatesApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Ref CatalogBackendUrl
+      RequestParameters:
+        "overwrite:path": "$request.path"
+        "append:header.ngrok-skip-browser-warning": "'true'"
+
+  InventoryIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref SkatesApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Ref InventoryBackendUrl
+      RequestParameters:
+        "overwrite:path": "$request.path"
+        "append:header.ngrok-skip-browser-warning": "'true'"
+
+  CatalogRootRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkatesApi
+      RouteKey: "ANY /api/skate"
+      Target: !Sub "integrations/${CatalogIntegration}"
+
+  CatalogProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkatesApi
+      RouteKey: "ANY /api/skate/{proxy+}"
+      Target: !Sub "integrations/${CatalogIntegration}"
+
+  InventoryRootRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkatesApi
+      RouteKey: "ANY /api/inventory"
+      Target: !Sub "integrations/${InventoryIntegration}"
+
+  InventoryProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkatesApi
+      RouteKey: "ANY /api/inventory/{proxy+}"
+      Target: !Sub "integrations/${InventoryIntegration}"
+
+  PaymentsProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkatesApi
+      RouteKey: "ANY /api/payments/{proxy+}"
+      Target: !Sub "integrations/${InventoryIntegration}"
+
+  LegacyPaymentsProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref SkatesApi
+      RouteKey: "ANY /api/pago/{proxy+}"
+      Target: !Sub "integrations/${InventoryIntegration}"
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref SkatesApi
+      StageName: "$default"
+      AutoDeploy: true
+
+Outputs:
+  ApiUrl:
+    Description: Public base URL to configure as VITE_API_URL in both frontends.
+    Value: !GetAtt SkatesApi.ApiEndpoint

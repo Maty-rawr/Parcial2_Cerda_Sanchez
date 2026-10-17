@@ -35,3 +35,4 @@ build/
 ### Local H2 database and private certificates ###
 /data/
 *.pem
+/infra/ngrok.local.yml
