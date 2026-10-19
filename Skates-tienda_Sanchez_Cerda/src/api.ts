@@ -23,6 +23,10 @@ export interface TransaccionWebpay {
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  if (!config.apiUrl && import.meta.env.MODE !== "ngrok") {
+    throw new Error("Configura VITE_API_URL con la URL de API Gateway para conectar con el backend.");
+  }
+
   const token = await obtenerAccessTokenDeSesion();
   const headers = new Headers(options.headers);
   if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
