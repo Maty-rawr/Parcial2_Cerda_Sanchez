@@ -20,7 +20,7 @@ public class CorsConfig implements WebMvcConfigurer {
                         .map(origin -> origin == null ? "" : origin.trim())
                         .filter(origin -> !origin.isEmpty())
                         .toArray(String[]::new))
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*");
     }
 }

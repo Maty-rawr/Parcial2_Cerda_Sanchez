@@ -1,0 +1,377 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: RDS MySQL and SNS/SQS messaging resources for the Skates application.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    AllowedPattern: "^[a-z0-9-]{2,12}$"
+    Description: Short environment prefix used in resource names.
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  DatabaseSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: At least two subnets in different Availability Zones.
+  DatabaseClientCidr:
+    Type: String
+    Default: 127.0.0.1/32
+    AllowedPattern: "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/(?:[0-9]|[12][0-9]|3[0-2])$"
+    Description: Restrict MySQL access to the backend's public IP using a /32 CIDR.
+  DatabaseName:
+    Type: String
+    Default: skates
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]{0,62}$"
+  DatabaseMasterUsername:
+    Type: String
+    Default: skatesadmin
+    MinLength: 1
+    MaxLength: 16
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]*$"
+  DatabaseMasterPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 12
+    MaxLength: 41
+    AllowedPattern: "^[a-zA-Z0-9!#$%^&*()_+=-]+$"
+    ConstraintDescription: Use 12-41 allowed characters; do not use '/', '@', '"', or spaces.
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    AllowedValues:
+      - db.t3.micro
+      - db.t4g.micro
+      - db.t3.small
+
+Resources:
+  SkatesEventTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${EnvironmentName}-skates-events"
+      DisplayName: Skates domain events
+
+  OrdersDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-skates-orders-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  OrdersQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-skates-orders"
+      VisibilityTimeout: 60
+      ReceiveMessageWaitTimeSeconds: 20
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt OrdersDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  InventoryDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-skates-inventory-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  InventoryQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-skates-inventory"
+      VisibilityTimeout: 60
+      ReceiveMessageWaitTimeSeconds: 20
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InventoryDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  NotificationsDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-skates-notifications-dlq"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  NotificationsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${EnvironmentName}-skates-notifications"
+      VisibilityTimeout: 60
+      ReceiveMessageWaitTimeSeconds: 20
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationsDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  OrdersQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref OrdersQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt OrdersQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref SkatesEventTopic
+
+  InventoryQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref InventoryQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt InventoryQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref SkatesEventTopic
+
+  NotificationsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref NotificationsQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt NotificationsQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !Ref SkatesEventTopic
+
+  OrdersSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: OrdersQueuePolicy
+    Properties:
+      TopicArn: !Ref SkatesEventTopic
+      Protocol: sqs
+      Endpoint: !GetAtt OrdersQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicy:
+        eventType:
+          - PAYMENT_COMPLETED
+          - PAYMENT_REJECTED
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt OrdersDeadLetterQueue.Arn
+
+  InventorySubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: InventoryQueuePolicy
+    Properties:
+      TopicArn: !Ref SkatesEventTopic
+      Protocol: sqs
+      Endpoint: !GetAtt InventoryQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicy:
+        eventType:
+          - INVENTORY_UPDATED
+
+  NotificationsSubscription:
+    Type: AWS::SNS::Subscription
+    DependsOn: NotificationsQueuePolicy
+    Properties:
+      TopicArn: !Ref SkatesEventTopic
+      Protocol: sqs
+      Endpoint: !GetAtt NotificationsQueue.Arn
+      RawMessageDelivery: true
+      FilterPolicy:
+        eventType:
+          - PAYMENT_COMPLETED
+          - PAYMENT_REJECTED
+          - INVENTORY_UPDATED
+
+  OrdersDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-skates-orders-dlq-not-empty"
+      AlarmDescription: Orders messages require investigation or redrive.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt OrdersDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  InventoryDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-skates-inventory-dlq-not-empty"
+      AlarmDescription: Inventory messages require investigation or redrive.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt InventoryDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  NotificationsDeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${EnvironmentName}-skates-notifications-dlq-not-empty"
+      AlarmDescription: Notification messages require investigation or redrive.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt NotificationsDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  SkatesMessagingDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "${EnvironmentName}-skates-messaging"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Orders queue and DLQ",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 60,
+                "metrics": [
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${OrdersQueue.QueueName}"],
+                  [".", "ApproximateNumberOfMessagesNotVisible", ".", "."],
+                  [".", "ApproximateAgeOfOldestMessage", ".", "."],
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${OrdersDeadLetterQueue.QueueName}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Inventory queue and DLQ",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 60,
+                "metrics": [
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${InventoryQueue.QueueName}"],
+                  [".", "ApproximateNumberOfMessagesNotVisible", ".", "."],
+                  [".", "ApproximateAgeOfOldestMessage", ".", "."],
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${InventoryDeadLetterQueue.QueueName}"]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Notifications queue and DLQ",
+                "view": "timeSeries",
+                "region": "${AWS::Region}",
+                "period": 60,
+                "metrics": [
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${NotificationsQueue.QueueName}"],
+                  [".", "ApproximateNumberOfMessagesNotVisible", ".", "."],
+                  [".", "ApproximateAgeOfOldestMessage", ".", "."],
+                  ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "${NotificationsDeadLetterQueue.QueueName}"]
+                ]
+              }
+            }
+          ]
+        }
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Restricted MySQL access for the Skates database.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: MySQL from the explicitly supplied backend/client CIDR.
+          IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: !Ref DatabaseClientCidr
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnets for the Skates MySQL database.
+      SubnetIds: !Ref DatabaseSubnets
+
+  SkatesDatabase:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "${EnvironmentName}-skates-mysql"
+      Engine: mysql
+      DBInstanceClass: !Ref DatabaseInstanceClass
+      AllocatedStorage: "20"
+      StorageType: gp3
+      StorageEncrypted: true
+      DBName: !Ref DatabaseName
+      MasterUsername: !Ref DatabaseMasterUsername
+      MasterUserPassword: !Ref DatabaseMasterPassword
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DatabaseSecurityGroup.GroupId
+      PubliclyAccessible: true
+      BackupRetentionPeriod: 7
+      AutoMinorVersionUpgrade: true
+      MultiAZ: false
+
+Outputs:
+  DatabaseEndpoint:
+    Description: MySQL endpoint. Keep inbound access restricted to the backend.
+    Value: !GetAtt SkatesDatabase.Endpoint.Address
+  DatabaseJdbcUrl:
+    Description: JDBC URL requiring TLS for the MySQL connection.
+    Value: !Sub "jdbc:mysql://${SkatesDatabase.Endpoint.Address}:${SkatesDatabase.Endpoint.Port}/${DatabaseName}?sslMode=REQUIRED&serverTimezone=UTC"
+  DatabaseSecurityGroupId:
+    Value: !GetAtt DatabaseSecurityGroup.GroupId
+  SnsTopicArn:
+    Value: !Ref SkatesEventTopic
+  OrdersQueueUrl:
+    Value: !Ref OrdersQueue
+  OrdersDlqUrl:
+    Value: !Ref OrdersDeadLetterQueue
+  InventoryQueueUrl:
+    Value: !Ref InventoryQueue
+  InventoryDlqUrl:
+    Value: !Ref InventoryDeadLetterQueue
+  NotificationsQueueUrl:
+    Value: !Ref NotificationsQueue
+  NotificationsDlqUrl:
+    Value: !Ref NotificationsDeadLetterQueue
+  CloudWatchDashboardName:
+    Value: !Ref SkatesMessagingDashboard

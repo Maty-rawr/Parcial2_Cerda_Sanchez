@@ -5,7 +5,7 @@ Panel de administración moderno y minimalista desarrollado para la gestión de 
 
 ## Autenticación con Amazon Cognito
 
-El panel usa AWS Amplify Auth con Cognito Hosted UI y Authorization Code + PKCE. Copia `.env.example` a `.env.local`; usa el App Client `2ndve0vjmlau9as43sapcmermb`, habilita Authorization Code y los scopes `openid`, `email`, `skate-api/read` y `skate-api/write`. Registra la URL local o pública como callback y logout URL en Cognito. Vite sirve el panel por HTTPS en desarrollo con un certificado local autofirmado; al abrirlo por primera vez, acepta el aviso del navegador. Las cuentas de administración también deben pertenecer al grupo Cognito `ADMIN`.
+El panel usa AWS Amplify Auth con Cognito Hosted UI y Authorization Code + PKCE. Copia `.env.example` a `.env.local`; usa el App Client `2ndve0vjmlau9as43sapcmermb`, habilita Authorization Code y los scopes `openid`, `email`, `skate-api/read` y `skate-api/write`. Registra la URL local o pública como callback y logout URL en Cognito. Vite sirve el panel por HTTPS en desarrollo con un certificado local autofirmado; al abrirlo por primera vez, acepta el aviso del navegador. Las cuentas de administración también deben pertenecer al grupo Cognito `ADMIN`; el backend aplica tanto el scope como el grupo, sin depender solo de la comprobación de UI.
 
 ### Publicar el panel admin bajo el dominio de la tienda
 

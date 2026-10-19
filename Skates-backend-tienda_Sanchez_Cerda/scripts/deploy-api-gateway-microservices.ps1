@@ -9,6 +9,10 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidatePattern("^https://[A-Za-z0-9.-]+(:[0-9]+)?$")]
+    [string]$AdminBackendUrl,
+
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern("^https://[A-Za-z0-9.-]+(:[0-9]+)?$")]
     [string]$StorefrontOrigin,
 
     [Parameter(Mandatory = $true)]
@@ -33,6 +37,7 @@ $templatePath = (Resolve-Path -LiteralPath $templatePath).Path
     --parameter-overrides `
         "CatalogBackendUrl=$CatalogBackendUrl" `
         "InventoryBackendUrl=$InventoryBackendUrl" `
+        "AdminBackendUrl=$AdminBackendUrl" `
         "StorefrontOrigin=$StorefrontOrigin" `
         "AdminOrigin=$AdminOrigin"
 if ($LASTEXITCODE -ne 0) {

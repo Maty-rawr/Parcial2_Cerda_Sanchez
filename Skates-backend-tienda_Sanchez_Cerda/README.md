@@ -13,6 +13,7 @@
 - JDK 17 o superior.
 - No es necesario instalar Maven: el proyecto incluye Maven Wrapper.
 - Puerto `8080` disponible.
+- Una base MySQL en AWS RDS y variables `DB_URL`, `DB_USERNAME` y `DB_PASSWORD`.
 
 Comprueba Java desde PowerShell:
 
@@ -25,13 +26,15 @@ java -version
 Desde la raíz del repositorio (`Skates-backend`):
 
 ```powershell
+$env:DB_URL="jdbc:mysql://<endpoint-rds>:3306/skates?sslMode=REQUIRED&serverTimezone=UTC"
+$env:DB_USERNAME="<usuario-aplicacion>"
+$env:DB_PASSWORD="<contraseña-aplicacion>"
 ./mvnw.cmd spring-boot:run
 ```
 
-La aplicación quedará disponible en:
+La API quedará disponible en `http://localhost:8080`. No hay una base de datos local embebida: el backend requiere conexión a MySQL.
 
-- API: `http://localhost:8080`
-- Consola H2: `http://localhost:8080/h2-console/`
+La infraestructura de RDS, SNS, las colas y sus DLQ se declara en [aws-skates-platform.yaml](./infra/aws-skates-platform.yaml). Limita el parámetro `DatabaseClientCidr` a la IP pública `/32` del backend; no abras MySQL a `0.0.0.0/0`.
 
 
 ### Empaquetar y ejecutar el JAR
@@ -65,7 +68,7 @@ También puedes probar todos los métodos con Postman usando la URL base `http:/
 
 ## Autenticación
 
-Los dos frontends usan AWS Amplify Auth con Amazon Cognito Hosted UI mediante Authorization Code y PKCE; no se necesita un client secret en el navegador. La API valida firma, emisor, expiración, tipo de token y `client_id`. Los scopes `skate-api/read` y `skate-api/write` autorizan lectura y escritura. Además, las operaciones que modifican productos requieren que el usuario pertenezca al grupo Cognito `ADMIN`.
+Los dos frontends usan AWS Amplify Auth con Amazon Cognito Hosted UI mediante Authorization Code y PKCE; no se necesita un client secret en el navegador. La API valida firma, emisor, expiración, tipo de token y `client_id`. Se aplican scopes de mínimo privilegio: tienda usa `skate-api/read` y `skate-api/purchase`; administración usa `skate-api/read` y `skate-api/write`. Además, las operaciones administrativas requieren el grupo Cognito `ADMIN`.
 
 ### Configuración de Cognito
 
@@ -73,7 +76,7 @@ Los dos frontends usan AWS Amplify Auth con Amazon Cognito Hosted UI mediante Au
 2. Usa los App Clients públicos de tienda `7vge2gthmumgohfn84aepg41qh` y admin `2ndve0vjmlau9as43sapcmermb` (sin client secret); habilita OAuth 2.0 Authorization Code Grant.
 3. Registra en cada App Client las callback y logout URLs exactas de su frontend. En desarrollo, la tienda usa `https://localhost:5173/` y administración usa `https://localhost:5174/`; agrega también las URLs HTTPS de producción cuando estén disponibles.
 4. Crea el grupo `ADMIN` en el User Pool y agrega a él las cuentas que administrarán el inventario. Las demás cuentas pueden iniciar sesión en la tienda, pero no modificar productos.
-5. Configura el resource server y agrega `skate-api/read` y `skate-api/write` a ambos App Clients. El script conserva los demás scopes y opciones existentes de cada cliente:
+5. Configura el resource server y los App Clients con scopes separados: tienda recibe `skate-api/read` y `skate-api/purchase`; administración recibe `skate-api/read` y `skate-api/write`. El script conserva scopes ajenos a `skate-api/*` y el resto de las opciones existentes:
 
 ```powershell
 .\scripts\configure-cognito-scopes.ps1
@@ -116,7 +119,9 @@ Requisitos: ngrok CLI autenticado, AWS CLI configurado con una región y permiso
    $env:COGNITO_ISSUER_URI="https://cognito-idp.us-east-1.amazonaws.com/us-east-1_AOH2j7aTl"
    $env:COGNITO_CLIENT_IDS="7vge2gthmumgohfn84aepg41qh,2ndve0vjmlau9as43sapcmermb"
    $env:CORS_ALLOWED_ORIGINS="<URL-TIENDA>,<URL-ADMIN>"
-   $env:H2_CONSOLE_ENABLED="false"
+   $env:DB_URL="jdbc:mysql://<endpoint-rds>:3306/skates?sslMode=REQUIRED&serverTimezone=UTC"
+   $env:DB_USERNAME="<usuario-aplicacion>"
+   $env:DB_PASSWORD="<contraseña-aplicacion>"
    .\mvnw.cmd spring-boot:run
    ```
 
@@ -143,21 +148,22 @@ El API Gateway añade el encabezado requerido para reenviar solicitudes al túne
 
 ### API Gateway con dos integraciones
 
-La plantilla [api-gateway-microservices.yaml](./infra/api-gateway-microservices.yaml) enruta `/api/skate/**` al servicio de catálogo y `/api/inventory/**`, `/api/payments/**` y `/api/pago/**` al servicio de inventario. Para desplegarla, los dos servicios deben estar ejecutándose y accesibles por HTTPS:
+La plantilla [api-gateway-microservices.yaml](./infra/api-gateway-microservices.yaml) enruta `/api/skate/**` y `/api/auth/**` al servicio de catálogo; `/api/inventory/**`, `/api/payments/**` y `/api/pago/**` al servicio de compras/inventario; y `/api/admin/messaging/**` al servicio administrador. Los tres servicios deben estar ejecutándose y accesibles por HTTPS:
 
 ```powershell
 .\scripts\deploy-api-gateway-microservices.ps1 `
   -CatalogBackendUrl "https://<url-catalogo>" `
   -InventoryBackendUrl "https://<url-inventario>" `
+  -AdminBackendUrl "https://<url-admin-api>" `
   -StorefrontOrigin "https://<url-tienda>" `
   -AdminOrigin "https://<url-admin>"
 ```
 
-Esta plantilla solo configura API Gateway; no crea ni separa aplicaciones Spring Boot. El backend de este repositorio continúa siendo una aplicación monolítica en `8080`, por lo que todavía no se debe desplegar la plantilla de dos integraciones hasta disponer de servicios de catálogo e inventario separados. La plantilla anterior `api-gateway-ngrok.yaml` sigue siendo la opción para probar ese backend monolítico.
+Las integraciones HTTP proxy reenvían el encabezado `Authorization` al backend, donde cada servicio valida el JWT de Cognito. La plantilla anterior [api-gateway-ngrok.yaml](./infra/api-gateway-ngrok.yaml) es solo para pruebas del backend monolítico local.
 
-Esta configuración cubre Cognito y autorización. La persistencia continúa usando H2 por ahora; EC2 es infraestructura de cómputo, no un motor de base de datos. La migración de base de datos requiere elegir un motor compatible y configurar sus credenciales fuera del código fuente.
+La base de datos es MySQL en Amazon RDS; sus credenciales se configuran mediante `DB_URL`, `DB_USERNAME` y `DB_PASSWORD` y no se guardan en el repositorio. La plantilla crea la instancia cifrada y restringe el puerto 3306 al CIDR indicado.
 
-Las solicitudes de lectura requieren un access token con el scope `skate-api/read`. Las operaciones de escritura requieren `skate-api/write`; además, crear, actualizar o eliminar skates requiere pertenecer al grupo Cognito `ADMIN`. La API responde `401` si falta un token válido y `403` si el token no tiene el scope o rol requerido.
+Las lecturas del catálogo requieren `skate-api/read`. Crear y confirmar compras y consultar el estado Webpay requieren `skate-api/purchase`. La escritura del catálogo y la administración de mensajería requieren `skate-api/write` y el grupo Cognito `ADMIN`. La API responde `401` si falta un token válido y `403` si el token no tiene el scope o grupo requerido.
 
 En Postman, agrega el encabezado a las operaciones protegidas:
 
@@ -165,7 +171,7 @@ En Postman, agrega el encabezado a las operaciones protegidas:
 Authorization: Bearer <token>
 ```
 
-Los `GET` de la API requieren `skate-api/read`. Las operaciones `POST`, `PUT` y `DELETE` de skates requieren `skate-api/write` y el grupo `ADMIN`.
+El cliente tienda debe solicitar `skate-api/read` para consultar el catálogo y `skate-api/purchase` para pagos. El cliente admin debe solicitar `skate-api/read` y `skate-api/write`; las operaciones administrativas requieren además el grupo `ADMIN`.
 
 ## Endpoints
 
@@ -195,14 +201,14 @@ El backend integra Webpay Plus usando el SDK oficial de Transbank en ambiente de
 2. El backend devuelve `token`, `url` y `buyOrder`.
 3. El frontend crea un formulario `POST` hacia `url` con el campo `token_ws` y lo envía a Webpay.
 4. Webpay devuelve el resultado a `/api/payments/webpay/return`.
-5. El backend confirma la transacción y valida que la orden y el monto coincidan con lo registrado en H2.
+5. El backend confirma la transacción y valida que la orden y el monto coincidan con lo registrado en MySQL.
 
 | Método | URL | Acceso | Descripción |
 | --- | --- | --- | --- |
-| `POST` | `/api/payments/webpay/transactions` | Scope `skate-api/write` | Crea una transacción Webpay. |
+| `POST` | `/api/payments/webpay/transactions` | Scope `skate-api/purchase` | Crea una transacción Webpay. |
 | `POST` | `/api/payments/webpay/return` | Público | Recibe el retorno de Webpay y confirma el pago. |
-| `POST` | `/api/payments/webpay/commit?token_ws={token}` | Scope `skate-api/write` | Confirma manualmente una transacción. |
-| `GET` | `/api/payments/webpay/status?token_ws={token}` | Scope `skate-api/read` | Consulta el estado en Transbank. |
+| `POST` | `/api/payments/webpay/commit?token_ws={token}` | Scope `skate-api/purchase` | Confirma manualmente una transacción. |
+| `GET` | `/api/payments/webpay/status?token_ws={token}` | Scope `skate-api/purchase` | Consulta el estado en Transbank. |
 
 El backend valida que los productos existan al crear la transacción, pero no modifica el stock. El descuento se realiza únicamente después de una confirmación Webpay con `status = AUTHORIZED` y `response_code = 0`.
 
@@ -338,46 +344,19 @@ Invoke-RestMethod `
 	-Headers $headers
 ```
 
-## Base de datos H2
+## Base de datos AWS RDS MySQL
 
-La aplicación usa H2 en modo archivo para desarrollo local:
+H2 y su consola fueron eliminados. El backend conecta exclusivamente a MySQL mediante estas variables obligatorias:
 
-- JDBC URL: `jdbc:h2:file:./data/skates;MODE=MySQL;AUTO_SERVER=TRUE`
-- Usuario: `sa`
-- Contraseña: vacía
-- Archivos de datos: `data/skates.*`
-- Consola: `http://localhost:8080/h2-console/`
+- `DB_URL`: JDBC URL del endpoint RDS, con `sslMode=REQUIRED`.
+- `DB_USERNAME` y `DB_PASSWORD`: usuario dedicado de aplicación; evita usar el usuario maestro de RDS.
+- `JPA_DDL_AUTO`: opcional; por defecto `update` para conservar y evolucionar el esquema sin borrar datos.
 
-En la pantalla de H2, completa los campos con esos valores y presiona **Connect**. Los cambios realizados allí permanecen después de reiniciar la aplicación porque la base está almacenada en archivos.
+La plantilla [aws-skates-platform.yaml](./infra/aws-skates-platform.yaml) crea una instancia MySQL cifrada, con copias de seguridad de siete días y acceso restringido por CIDR. Requiere seleccionar una VPC y al menos dos subredes en zonas de disponibilidad distintas. Para desarrollo local, limita `DatabaseClientCidr` a tu IP pública `/32`; para producción, aloja el backend en la VPC y limita el acceso a su grupo de seguridad.
 
-Hibernate usa `ddl-auto=update`, por lo que crea o actualiza la tabla sin borrar los datos existentes. Si la tabla está vacía, la aplicación carga automáticamente datos de ejemplo de los modelos `Street`, `Longboard` y `Downhill`.
+Después de crear la instancia, crea un usuario SQL de aplicación con permisos solo sobre la base `skates` y configura las tres variables anteriores en el entorno de cada servicio. No subas la contraseña ni la URL con credenciales a Git.
 
-No elimines los archivos de `data/` si necesitas conservar los datos locales.
-
-### Simular una compra desde la consola H2
-
-Para simular la compra de una unidad del skate con `ID = 1`, ejecuta en el editor SQL de H2:
-
-```sql
-UPDATE SKATES SET STOCK = STOCK - 1 WHERE ID = 1;
-```
-
-Esta consulta realiza lo siguiente:
-
-- Busca el registro de la tabla `SKATES` cuyo `ID` sea `1`.
-- Disminuye su valor de `STOCK` en una unidad.
-- Si el stock actual era `8`, después de la compra quedará en `7`.
-- Solo modifica ese registro; los demás productos no cambian.
-
-Después de ejecutar la consulta, H2 mostrará la cantidad de filas afectadas. Lo esperado es `1` si existe el producto con `ID = 1`. Para verificar el nuevo stock, ejecuta:
-
-```sql
-SELECT ID, MODELO, MARCA, STOCK
-FROM SKATES
-WHERE ID = 1;
-```
-
-La consulta de simulación no valida que el stock sea mayor que cero. Si se ejecuta cuando `STOCK` vale `0`, podría quedar en `-1`; en una compra real conviene validar el stock antes de descontarlo.
+Los datos de ejemplo de `Street`, `Longboard` y `Downhill` se insertan únicamente cuando la tabla de productos está vacía.
 
 ## CORS
 
@@ -386,7 +365,7 @@ El backend permite solicitudes desde:
 - `https://localhost:5173`
 - `http://localhost:5174`
 
-Los métodos permitidos son `GET`, `POST`, `PUT`, `DELETE` y `OPTIONS` para las rutas `/api/**`.
+Los métodos permitidos son `GET`, `POST`, `PUT`, `PATCH`, `DELETE` y `OPTIONS` para las rutas `/api/**`.
 
 ## Pruebas y calidad
 
@@ -408,7 +387,7 @@ Compilar sin ejecutar pruebas:
 ./mvnw.cmd -q -DskipTests compile
 ```
 
-Las pruebas usan una base H2 en memoria (`jdbc:h2:mem:skates`), independiente de la base persistente de `data/`.
+Las pruebas de integración usan MySQL 8.4 con Testcontainers y se omiten cuando Docker no está disponible. Las pruebas unitarias no requieren AWS ni una instancia RDS.
 
 ## Respuestas de error
 
@@ -441,13 +420,13 @@ $env:SERVER_PORT="8081"
 ./mvnw.cmd spring-boot:run
 ```
 
-### H2 muestra `401` o `404`
+### El backend no conecta a RDS
 
-Verifica que hayas ejecutado `./mvnw.cmd clean package` o `./mvnw.cmd spring-boot:run` después de descargar las dependencias y que estés usando `/h2-console/`. La dependencia `spring-boot-h2console` es necesaria con Spring Boot 4.
+Verifica que `DB_URL`, `DB_USERNAME` y `DB_PASSWORD` estén definidos, que el Security Group permita el puerto 3306 desde el backend y que la URL JDBC use `sslMode=REQUIRED`.
 
 ### No aparecen los datos de ejemplo
 
-Comprueba que estás usando la URL `jdbc:h2:file:./data/skates` y que la tabla `skates` no contiene registros previos. Los datos iniciales solo se cargan cuando la tabla está vacía.
+Los datos de ejemplo solo se insertan cuando la tabla `skates` está vacía. Revisa que el servicio use la base de datos y el esquema RDS esperados.
 
 ### Simular transsacción Webpay
 

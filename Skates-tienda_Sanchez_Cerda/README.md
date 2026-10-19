@@ -2,11 +2,11 @@
 
 ## Autenticacion con Amazon Cognito
 
-La tienda usa AWS Amplify Auth con Cognito Hosted UI y Authorization Code + PKCE. Copia `.env.example` a `.env.local`; configura el User Pool y el App Client `7vge2gthmumgohfn84aepg41qh` para permitir Authorization Code y los scopes `openid`, `email`, `skate-api/read` y `skate-api/write`. La URL local de callback y cierre de sesión es:
+La tienda usa AWS Amplify Auth con Cognito Hosted UI y Authorization Code + PKCE. Copia `.env.example` a `.env.local`; configura el User Pool y el App Client `7vge2gthmumgohfn84aepg41qh` para permitir Authorization Code y los scopes `openid`, `email`, `skate-api/read` y `skate-api/purchase`. No concedas a la tienda `skate-api/write`, que se reserva para administración del catálogo. La URL local de callback y cierre de sesión es:
 
 - `https://localhost:5173/`
 
-La configuración inicial de `.env.example` usa el User Pool y el App Client indicados para este entorno. Vite sirve la tienda por HTTPS en desarrollo con un certificado local autofirmado; al abrirla por primera vez, acepta el aviso del navegador. No configures un client secret en la aplicación del navegador. Los accesos al catálogo requieren autenticarse porque la API exige el scope `skate-api/read`. Para producción, registra las URLs HTTPS correspondientes en Cognito y define `VITE_COGNITO_REDIRECT_URI` y `VITE_COGNITO_LOGOUT_URI`.
+La configuración inicial de `.env.example` usa el User Pool y el App Client indicados para este entorno. Vite sirve la tienda por HTTPS en desarrollo con un certificado local autofirmado; al abrirla por primera vez, acepta el aviso del navegador. No configures un client secret en la aplicación del navegador. El catálogo requiere `skate-api/read` y las operaciones Webpay requieren `skate-api/purchase`. Para producción, registra las URLs HTTPS correspondientes en Cognito y define `VITE_COGNITO_REDIRECT_URI` y `VITE_COGNITO_LOGOUT_URI`.
 
 ### Publicar tienda y API para pruebas con ngrok
 

@@ -1,6 +1,7 @@
 package cl.duoc.backendskatesapp.service;
 
 import jakarta.annotation.PostConstruct;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -10,6 +11,7 @@ import cl.duoc.backendskatesapp.repository.SkateRepository;
 import java.util.List;
 
 @Service
+@Profile({"all", "catalog"})
 public class SkateService {
 
     private final SkateRepository skateRepository;

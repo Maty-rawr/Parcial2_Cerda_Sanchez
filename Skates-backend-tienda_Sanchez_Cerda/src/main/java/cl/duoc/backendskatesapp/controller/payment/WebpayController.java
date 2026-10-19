@@ -13,12 +13,14 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.context.annotation.Profile;
 
 import cl.duoc.backendskatesapp.service.WebpayService;
 import cl.transbank.webpay.webpayplus.responses.WebpayPlusTransactionStatusResponse;
 
 @RestController
 @RequestMapping({"/api/payments/webpay", "/api/pago"})
+@Profile({"all", "commerce"})
 public class WebpayController {
 
     private final WebpayService webpayService;

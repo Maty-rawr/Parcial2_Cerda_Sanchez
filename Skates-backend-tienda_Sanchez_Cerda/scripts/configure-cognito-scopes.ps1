@@ -35,12 +35,13 @@ $resourceServer = $resourceServers.ResourceServers |
 $scopes = @()
 if ($resourceServer) {
     $scopes = @($resourceServer.Scopes | Where-Object {
-        $_.ScopeName -notin @("read", "write")
+        $_.ScopeName -notin @("read", "write", "purchase")
     })
 }
 $scopes += @(
-    @{ ScopeName = "read"; ScopeDescription = "Read skate catalog and inventory" },
-    @{ ScopeName = "write"; ScopeDescription = "Create or modify skate catalog and inventory" }
+    @{ ScopeName = "read"; ScopeDescription = "Read the skate catalog and inventory" },
+    @{ ScopeName = "write"; ScopeDescription = "Create, update, or delete catalog and messaging resources" },
+    @{ ScopeName = "purchase"; ScopeDescription = "Create and confirm customer purchases" }
 )
 
 $resourceServerInput = @{
@@ -76,7 +77,6 @@ $preservedClientFields = @(
     "CallbackURLs",
     "LogoutURLs",
     "AllowedOAuthFlows",
-    "AllowedOAuthScopes",
     "AllowedOAuthFlowsUserPoolClient",
     "AnalyticsConfiguration",
     "PreventUserExistenceErrors",
@@ -100,15 +100,28 @@ foreach ($clientId in $AppClientIds) {
         throw "No se encontró el App Client $clientId en el User Pool $UserPoolId."
     }
 
-    $updatedScopes = @($client.AllowedOAuthScopes)
-    foreach ($scope in @(
-        "$ResourceServerIdentifier/read",
-        "$ResourceServerIdentifier/write"
-    )) {
-        if ($updatedScopes -notcontains $scope) {
-            $updatedScopes += $scope
-        }
+    $clientScopeNames = @()
+    if ($clientId -eq "7vge2gthmumgohfn84aepg41qh") {
+        $clientScopeNames = @(
+            "$ResourceServerIdentifier/read",
+            "$ResourceServerIdentifier/purchase"
+        )
+    } elseif ($clientId -eq "2ndve0vjmlau9as43sapcmermb") {
+        $clientScopeNames = @(
+            "$ResourceServerIdentifier/read",
+            "$ResourceServerIdentifier/write"
+        )
+    } else {
+        throw "App Client ID no reconocido: $clientId. Configura explícitamente si corresponde a tienda o administración."
     }
+    $unrelatedScopes = @($client.AllowedOAuthScopes | Where-Object {
+        $_ -notin @(
+            "$ResourceServerIdentifier/read",
+            "$ResourceServerIdentifier/write",
+            "$ResourceServerIdentifier/purchase"
+        )
+    })
+    $updatedScopes = @($unrelatedScopes + $clientScopeNames | Select-Object -Unique)
 
     $clientInput = @{
         ClientId = $clientId
@@ -135,5 +148,5 @@ foreach ($clientId in $AppClientIds) {
         Remove-Item -LiteralPath $clientFile -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "Scopes skate-api/read y skate-api/write configurados en App Client $clientId."
+    Write-Host "Scopes Cognito configurados para App Client $clientId`: $($clientScopeNames -join ', ')."
 }

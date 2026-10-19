@@ -7,9 +7,12 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +22,7 @@ import org.slf4j.LoggerFactory;
 
 import cl.duoc.backendskatesapp.model.PaymentTransaction;
 import cl.duoc.backendskatesapp.model.PaymentTransactionItem;
+import cl.duoc.backendskatesapp.messaging.MessagingDomainEvent;
 import cl.duoc.backendskatesapp.controller.payment.WebpayItemRequest;
 import cl.duoc.backendskatesapp.controller.payment.WebpayPaymentResponse;
 import cl.duoc.backendskatesapp.model.Skate;
@@ -33,6 +37,7 @@ import cl.duoc.backendskatesapp.controller.payment.WebpayCreateResponse;
 import cl.duoc.backendskatesapp.repository.PaymentTransactionRepository;
 
 @Service
+@Profile({"all", "commerce"})
 public class WebpayService {
 
     private final WebpayPlus.Transaction transaction;
@@ -43,6 +48,7 @@ public class WebpayService {
     private final String apiKeySecret;
     private final String createUrl;
     private final String returnUrl;
+    private final ApplicationEventPublisher eventPublisher;
 
     private static final Logger logger = LoggerFactory.getLogger(WebpayService.class);
 
@@ -54,7 +60,8 @@ public class WebpayService {
             @Value("${transbank.commerce-code:597055555532}") String commerceCode,
             @Value("${transbank.api-key-secret:}") String apiKeySecret,
             @Value("${transbank.create-url:https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions}") String createUrl,
-            @Value("${transbank.return-url:http://localhost:5173/}") String returnUrl) {
+            @Value("${transbank.return-url:http://localhost:5173/}") String returnUrl,
+            ApplicationEventPublisher eventPublisher) {
         
         this.transaction = new WebpayPlus.Transaction(
             new WebpayOptions(commerceCode, apiKeySecret, IntegrationType.TEST)
@@ -67,6 +74,7 @@ public class WebpayService {
         this.apiKeySecret = apiKeySecret;
         this.createUrl = createUrl;
         this.returnUrl = returnUrl;
+        this.eventPublisher = eventPublisher;
     }
 
     // 2. Constructor secundario para pruebas unitarias (Mocks)
@@ -83,6 +91,7 @@ public class WebpayService {
         this.apiKeySecret = "test-only-not-a-secret";
         this.createUrl = "https://webpay3gint.transbank.cl/rswebpaytransaction/api/webpay/v1.2/transactions";
         this.returnUrl = returnUrl;
+        this.eventPublisher = event -> { };
     }
 
     @Transactional
@@ -175,6 +184,9 @@ public class WebpayService {
                 paymentTransaction.setStatus("REJECTED");
                 paymentTransaction.setFailureReason("Transbank rechazó la transacción");
                 paymentTransactionRepository.save(paymentTransaction);
+                eventPublisher.publishEvent(MessagingDomainEvent.create(
+                        "PAYMENT_REJECTED",
+                        Map.of("buyOrder", paymentTransaction.getBuyOrder())));
                 return responseFor(paymentTransaction);
             }
 
@@ -189,6 +201,19 @@ public class WebpayService {
             paymentTransaction.setStatus("COMPLETED");
             paymentTransaction.setCompletedAt(Instant.now());
             paymentTransactionRepository.save(paymentTransaction);
+            eventPublisher.publishEvent(MessagingDomainEvent.create(
+                    "PAYMENT_COMPLETED",
+                    Map.of(
+                            "buyOrder", paymentTransaction.getBuyOrder(),
+                            "amount", paymentTransaction.getAmount().toPlainString())));
+            for (PaymentTransactionItem item : paymentTransaction.getItems()) {
+                eventPublisher.publishEvent(MessagingDomainEvent.create(
+                        "INVENTORY_UPDATED",
+                        Map.of(
+                                "buyOrder", paymentTransaction.getBuyOrder(),
+                                "skateId", item.getSkateId(),
+                                "quantity", item.getQuantity())));
+            }
             return responseFor(paymentTransaction);
         } catch (Exception ex) {
             throw new RuntimeException("No fue posible confirmar la transacción en Transbank", ex);

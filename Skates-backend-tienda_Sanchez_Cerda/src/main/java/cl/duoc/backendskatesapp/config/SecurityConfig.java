@@ -11,7 +11,6 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.config.annotation.web.configuration.WebSecurityCustomizer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -67,11 +66,6 @@ public class SecurityConfig {
     }
 
     @Bean
-    WebSecurityCustomizer webSecurityCustomizer() {
-        return web -> web.ignoring().requestMatchers("/h2-console", "/h2-console/**");
-    }
-
-    @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .csrf(csrf -> csrf.disable())
@@ -80,8 +74,19 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/payments/webpay/return", "/api/pago/return").permitAll()
                         .requestMatchers("/error").permitAll()
-                        .requestMatchers("/h2-console").permitAll()
-                        .requestMatchers("/h2-console/**").permitAll()
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/payments/webpay/create",
+                                "/api/payments/webpay/transactions",
+                                "/api/payments/webpay/iniciar",
+                                "/api/payments/webpay/commit",
+                                "/api/pago/create",
+                                "/api/pago/transactions",
+                                "/api/pago/iniciar",
+                                "/api/pago/commit")
+                        .hasAuthority("SCOPE_skate-api/purchase")
+                        .requestMatchers(HttpMethod.GET, "/api/payments/webpay/status", "/api/pago/status")
+                        .hasAuthority("SCOPE_skate-api/purchase")
                         .requestMatchers(HttpMethod.GET, "/api/auth/**").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/**").hasAuthority("SCOPE_skate-api/read")
                         .requestMatchers(HttpMethod.POST, "/api/**")
@@ -93,7 +98,6 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.DELETE, "/api/**")
                         .hasAuthority("SCOPE_skate-api/write")
                         .anyRequest().authenticated())
-                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .oauth2ResourceServer(oauth -> oauth.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter())));
         return http.build();
     }

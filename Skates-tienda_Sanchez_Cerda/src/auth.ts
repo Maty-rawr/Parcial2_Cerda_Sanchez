@@ -12,7 +12,7 @@ Amplify.configure({
       loginWith: {
         oauth: {
           domain: new URL(config.cognitoDomain).hostname,
-          scopes: ["openid", "email", "skate-api/read", "skate-api/write"],
+          scopes: ["openid", "email", "skate-api/read", "skate-api/purchase"],
           redirectSignIn: [config.cognitoRedirectUri],
           redirectSignOut: [config.cognitoLogoutUri],
           responseType: "code",
