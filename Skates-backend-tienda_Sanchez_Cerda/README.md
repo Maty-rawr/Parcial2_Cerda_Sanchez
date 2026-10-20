@@ -411,13 +411,102 @@ src/main/java/cl/duoc/backendskatesapp/
 
 ## Solución rápida de problemas
 
-### El puerto 8080 está ocupado
+### Arranque automático del backend en EC2
 
-Ejecuta la aplicación en otro puerto:
+El backend debe ejecutarse como servicio `systemd`, no depender de una terminal SSH abierta. La configuración siguiente se realiza una sola vez en la EC2. Requiere que el JAR esté en `/home/ec2-user/app.jar` y que Java esté instalado.
 
-```powershell
-$env:SERVER_PORT="8081"
-./mvnw.cmd spring-boot:run
+1. Crea un archivo de entorno privado para las credenciales y configuración:
+
+   ```bash
+   sudo install -d -o root -g root -m 700 /etc/skates
+   sudo nano /etc/skates/backend.env
+   ```
+
+   Incluye una variable por línea, con los valores actuales. No subas este archivo al repositorio ni compartas su contenido:
+
+   ```ini
+   DB_URL=jdbc:mysql://skates-db.cq2uked3iq8l.us-east-1.rds.amazonaws.com:3306/skates?sslMode=REQUIRED&serverTimezone=UTC
+   DB_USERNAME=skates_app
+   DB_PASSWORD=<contraseña-actual-de-skates_app>
+   COGNITO_ISSUER_URI=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_AOH2j7aTl
+   COGNITO_CLIENT_IDS=7vge2gthmumgohfn84aepg41qh,2ndve0vjmlau9as43sapcmermb
+   CORS_ALLOWED_ORIGINS=https://main.d1o3gk7dbea0nw.amplifyapp.com,https://main.d3sasx7zpqdlhj.amplifyapp.com
+   ```
+
+   Sustituye el marcador de contraseña por la contraseña actual de RDS. Protege el archivo y verifica que solo root pueda leerlo:
+
+   ```bash
+   sudo chown root:root /etc/skates/backend.env
+   sudo chmod 600 /etc/skates/backend.env
+   ```
+
+2. Crea `/etc/systemd/system/skates-backend.service`:
+
+   ```ini
+   [Unit]
+   Description=Skates Spring Boot backend
+   Wants=network-online.target
+   After=network-online.target
+
+   [Service]
+   Type=simple
+   User=ec2-user
+   WorkingDirectory=/home/ec2-user
+   EnvironmentFile=/etc/skates/backend.env
+   ExecStart=/usr/bin/java -jar /home/ec2-user/app.jar
+   Restart=on-failure
+   RestartSec=15
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   Confirma la ruta de Java con `command -v java`; si no es `/usr/bin/java`, actualiza `ExecStart` con la ruta que devuelve el comando.
+
+3. Antes de iniciar el servicio, verifica si todavía hay una ejecución manual escuchando en el puerto 8080:
+
+   ```bash
+   sudo ss -ltnp | grep ':8080'
+   ```
+
+   Si hay un proceso, confirma con `ps -fp <PID>` que corresponde a `/home/ec2-user/app.jar` y detenlo de forma controlada con `kill -TERM <PID>`. No detengas un proceso que no hayas identificado.
+
+4. Activa el servicio y haz que inicie automáticamente en cada arranque de EC2:
+
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now skates-backend
+   sudo systemctl status skates-backend --no-pager
+   ```
+
+   Comprueba que Spring Boot haya iniciado y que responde localmente:
+
+   ```bash
+   curl -i http://127.0.0.1:8080/api/skate
+   ```
+
+   Sin token, `401 Unauthorized` es esperado y confirma que la aplicación responde. Tras reiniciar la EC2, `systemd` volverá a iniciar el backend; si RDS aún no está disponible, el servicio reintentará cada 15 segundos.
+
+### EC2 está encendida, pero el backend no responde (`HTTP 000`)
+
+Comprueba primero el servicio, en vez de iniciar otra copia del JAR:
+
+```bash
+sudo systemctl status skates-backend --no-pager
+sudo journalctl -u skates-backend -n 100 --no-pager
+```
+
+Si el servicio está detenido, intenta iniciarlo y valida su estado:
+
+```bash
+sudo systemctl restart skates-backend
+sudo systemctl status skates-backend --no-pager
+```
+
+Si falla, revisa los registros, que RDS esté disponible, la conectividad al puerto 3306 y las variables del archivo `/etc/skates/backend.env`. No imprimas ni compartas el contenido de ese archivo, pues incluye la contraseña de base de datos. Si la contraseña de `skates_app` cambió, actualiza el archivo de entorno y reinicia el servicio:
+
+```bash
+sudo systemctl restart skates-backend
 ```
 
 ### El backend no conecta a RDS
