@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import cl.duoc.backendskatesapp.model.ConsumerControl;
 import cl.duoc.backendskatesapp.service.AwsMessagingAdminService;
+import cl.duoc.backendskatesapp.service.MessagingOverviewService;
 
 @RestController
 @RequestMapping("/api/admin/messaging")
@@ -31,9 +32,18 @@ import cl.duoc.backendskatesapp.service.AwsMessagingAdminService;
 public class MessagingAdminController {
 
     private final AwsMessagingAdminService adminService;
+    private final MessagingOverviewService overviewService;
 
-    public MessagingAdminController(AwsMessagingAdminService adminService) {
+    public MessagingAdminController(
+            AwsMessagingAdminService adminService,
+            MessagingOverviewService overviewService) {
         this.adminService = adminService;
+        this.overviewService = overviewService;
+    }
+
+    @GetMapping("/overview")
+    public MessagingOverviewService.Overview messagingOverview() {
+        return overviewService.getOverview();
     }
 
     @GetMapping("/queues")

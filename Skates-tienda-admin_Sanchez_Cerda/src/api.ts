@@ -18,6 +18,25 @@ export interface NuevoSkate {
   stock: number;
 }
 
+export interface MessagingQueueStatus {
+  name: string;
+  visibleMessages: number;
+  inFlightMessages: number;
+  deadLetterMessages: number;
+  paused: boolean;
+}
+
+export interface MessagingOverview {
+  topicArn: string;
+  queues: MessagingQueueStatus[];
+  recentEvents: {
+    consumerName: string;
+    eventId: string;
+    eventType: string;
+    processedAt: string;
+  }[];
+}
+
 export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
   if (!config.apiUrl && import.meta.env.MODE !== "ngrok") {
     throw new Error("Configura VITE_API_URL con la URL de API Gateway para conectar con el backend.");
@@ -32,6 +51,24 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
     ...options,
     headers,
   });
+}
+
+export async function obtenerResumenMensajeria(): Promise<MessagingOverview> {
+  const res = await apiFetch("/api/admin/messaging/overview");
+  if (!res.ok) {
+    throw new Error(`El backend respondió ${res.status} al consultar SNS/SQS`);
+  }
+  return res.json();
+}
+
+export async function cambiarPausaConsumidor(name: string, paused: boolean): Promise<void> {
+  const action = paused ? "pause" : "resume";
+  const res = await apiFetch(`/api/admin/messaging/consumers/${encodeURIComponent(name)}/${action}`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error(`El backend respondió ${res.status} al ${paused ? "pausar" : "reanudar"} ${name}`);
+  }
 }
 
 export async function obtenerCatalogo(): Promise<Skate[]> {

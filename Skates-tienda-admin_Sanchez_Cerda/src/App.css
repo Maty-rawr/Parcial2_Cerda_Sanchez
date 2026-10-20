@@ -76,3 +76,152 @@ button:disabled {
   padding: 6px 0;
   border-bottom: 1px solid #eee;
 }
+.messaging-panel {
+  color: #f8fafc;
+}
+.messaging-heading,
+.messaging-queue-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.messaging-heading {
+  margin-bottom: 20px;
+}
+.messaging-heading h3,
+.messaging-queue-card h4 {
+  margin: 0;
+  color: #f8fafc;
+}
+.messaging-heading p,
+.messaging-queue-card small,
+.messaging-note {
+  color: #94a3b8;
+  font-size: 13px;
+}
+.messaging-topic {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+}
+.messaging-topic span {
+  color: #94a3b8;
+  font-size: 13px;
+}
+.messaging-topic code {
+  overflow-wrap: anywhere;
+}
+.messaging-queues {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+.messaging-queue-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #0f172a;
+}
+.messaging-status {
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.messaging-status.is-running {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.12);
+}
+.messaging-status.is-paused {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.12);
+}
+.messaging-queue-card dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+.messaging-queue-card dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #cbd5e1;
+}
+.messaging-queue-card dt {
+  color: #94a3b8;
+}
+.messaging-queue-card dd {
+  margin: 0;
+  font-weight: 700;
+}
+.messaging-queue-card .has-dlq-messages,
+.messaging-error {
+  color: #fca5a5;
+}
+.messaging-queue-card button,
+.messaging-heading button {
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 12px;
+  color: #fff;
+  background: #334155;
+  cursor: pointer;
+}
+.messaging-queue-card button:disabled,
+.messaging-heading button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.messaging-error {
+  margin: 12px 0;
+}
+.messaging-note {
+  margin-top: 18px;
+}
+.messaging-events {
+  margin-top: 28px;
+}
+.messaging-events h3 {
+  margin: 0 0 14px;
+  color: #f8fafc;
+}
+.messaging-event-list {
+  display: grid;
+  gap: 10px;
+}
+.messaging-event {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0f172a;
+}
+.messaging-event div {
+  display: grid;
+  gap: 3px;
+}
+.messaging-event strong {
+  color: #f8fafc;
+}
+.messaging-event span,
+.messaging-event time {
+  color: #94a3b8;
+  font-size: 12px;
+}
+.messaging-event code {
+  overflow-wrap: anywhere;
+}
+.messaging-message {
+  color: #94a3b8;
+}

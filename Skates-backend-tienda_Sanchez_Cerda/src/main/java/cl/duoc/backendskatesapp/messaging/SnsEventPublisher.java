@@ -4,7 +4,6 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -12,12 +11,13 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.context.annotation.Profile;
 
+import cl.duoc.backendskatesapp.config.MessagingProperties;
 import software.amazon.awssdk.services.sns.SnsClient;
 import software.amazon.awssdk.services.sns.model.MessageAttributeValue;
 import software.amazon.awssdk.services.sns.model.PublishRequest;
 
 @Component
-@Profile({"all", "catalog", "commerce"})
+@Profile({"all", "catalog", "commerce", "admin"})
 @ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
 public class SnsEventPublisher {
 
@@ -25,15 +25,15 @@ public class SnsEventPublisher {
 
     private final SnsClient snsClient;
     private final ObjectMapper objectMapper;
-    private final String topicArn;
+    private final MessagingProperties properties;
 
     public SnsEventPublisher(
             SnsClient snsClient,
             ObjectMapper objectMapper,
-            @Value("${app.messaging.topic-arn}") String topicArn) {
+            MessagingProperties properties) {
         this.snsClient = snsClient;
         this.objectMapper = objectMapper;
-        this.topicArn = topicArn;
+        this.properties = properties;
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -51,6 +51,7 @@ public class SnsEventPublisher {
     }
 
     private void publish(MessagingDomainEvent event) {
+        String topicArn = properties.getTopicArn();
         if (topicArn.isBlank()) {
             throw new IllegalStateException("SNS_TOPIC_ARN must be configured when messaging is enabled");
         }

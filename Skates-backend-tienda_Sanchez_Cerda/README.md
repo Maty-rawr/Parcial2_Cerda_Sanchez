@@ -34,7 +34,105 @@ $env:DB_PASSWORD="<contraseña-aplicacion>"
 
 La API quedará disponible en `http://localhost:8080`. No hay una base de datos local embebida: el backend requiere conexión a MySQL.
 
-La infraestructura de RDS, SNS, las colas y sus DLQ se declara en [aws-skates-platform.yaml](./infra/aws-skates-platform.yaml). Limita el parámetro `DatabaseClientCidr` a la IP pública `/32` del backend; no abras MySQL a `0.0.0.0/0`.
+La plantilla histórica [aws-skates-platform.yaml](./infra/aws-skates-platform.yaml) declara conjuntamente RDS y mensajería. **No la despliegues completa para crear SNS/SQS**: podría cambiar recursos de base de datos existentes. Para una topología nueva y separada, revisa [aws-skates-messaging.yaml](./infra/aws-skates-messaging.yaml), que solo declara SNS, SQS y monitoreo. Antes de desplegar cualquiera de las dos, inventaría el stack y los recursos existentes, revisa el change set y obtén autorización del responsable de AWS Academy.
+
+### SNS/SQS y workers
+
+La mensajería permanece deshabilitada por defecto. Para activar el publicador, define `MESSAGING_ENABLED=true`, `AWS_REGION` y `SNS_TOPIC_ARN`. El perfil `worker` habilita el consumo y además requiere `SQS_ORDERS_QUEUE_URL`, `SQS_ORDERS_DLQ_URL`, `SQS_INVENTORY_QUEUE_URL`, `SQS_INVENTORY_DLQ_URL`, `SQS_NOTIFICATIONS_QUEUE_URL` y `SQS_NOTIFICATIONS_DLQ_URL`. Configura credenciales mediante el proveedor de identidad AWS del entorno; nunca las guardes en el repositorio.
+
+Mantén `SQS_MAX_RECEIVE_COUNT` igual al parámetro `MaxReceiveCount` de CloudFormation. Su valor predeterminado en ambos es `5`. Las colas declaran long polling de 20 segundos; el consumidor usa ese valor de cola y solicita el contador de recepción para registrar fallos.
+
+#### Tratamiento de mensajes
+
+| Caso | Ejemplo | Tratamiento |
+|---|---|---|
+| Error recuperable | Base de datos caída o timeout de AWS | No se confirma el mensaje; vuelve a estar disponible al vencer el visibility timeout y SQS lo mueve a la DLQ al superar `SQS_MAX_RECEIVE_COUNT`. |
+| Error no recuperable | JSON inválido, `eventId` vacío o tipo de evento no soportado | Se registra la causa, se copia el mensaje y sus atributos de fallo a la DLQ, y solo después se confirma el mensaje original. |
+| Duplicado | El mismo `eventId` ya fue procesado por ese consumidor | Se confirma sin repetir el procesamiento; la clave única de `processed_messages` protege la idempotencia. |
+
+Cada dominio tiene una clase consumidora independiente en `messaging/orders`, `messaging/inventory` y `messaging/notifications`. Estas clases delegan el polling/ACK al servicio común `QueueMessagePollingService`, que usa el SDK de AWS y el perfil `worker`. Se conserva este Plan B (polling separado por dominio) en vez de `@SqsListener`: el proyecto usa Spring Boot `4.1.1` y no se incorporó Spring Cloud AWS sin confirmar compatibilidad binaria con esa versión.
+
+Con `MESSAGING_ENABLED=true`, el panel admin muestra el estado y los conteos aproximados de las tres colas y sus DLQ, los últimos 50 eventos persistidos (sin exponer el payload) y permite pausar/reanudar los consumidores. La vista consulta atributos de SQS sin recibir ni retirar cuerpos de mensajes; requiere acceso autenticado de administrador, permiso `sqs:GetQueueAttributes` y conexión a la base que contiene `processed_messages`.
+
+#### Perfiles como procesos independientes
+
+Cada proceso se inicia con un solo perfil Spring explícito. Los procesos deben compartir la misma base MySQL; ambos workers deben usar exactamente las mismas URLs SQS. Los puertos son valores sugeridos y deben coincidir con el proxy/API Gateway que enruta las solicitudes.
+
+| Perfil | Función activa | Puerto sugerido |
+|---|---|---:|
+| `catalog` | API de catálogo; publica `INVENTORY_UPDATED` al crear/actualizar/eliminar productos. | 8081 |
+| `commerce` | API de pagos Webpay; publica eventos `PAYMENT_*`. | 8082 |
+| `admin` | API del panel (productos y mensajería); exige Cognito `ADMIN` para rutas de escritura. Publica cambios de inventario. | 8083 |
+| `worker` | Tres consumidores Orders/Inventory/Notifications, con polling y ACK explícito. | 8084 |
+| `worker` (segunda instancia) | Segundo proceso consumidor sobre las mismas colas y base de datos. | 8085 |
+
+El perfil `admin` también expone el CRUD de productos porque el panel existente lo usa. Esto permite que ese proceso publique `INVENTORY_UPDATED` y sirva `/api/admin/messaging/overview`. El perfil `admin` no habilita las rutas de pago; esas se mantienen en `commerce`.
+
+Para ejecutarlos en terminales PowerShell distintas desde la carpeta del backend, configura en cada terminal el mismo conjunto de credenciales AWS, variables de mensajería y conexión MySQL. Ejemplo para el proceso de administración:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = "admin"
+$env:SERVER_PORT = "8083"
+java -jar .\target\backend-skates-app-0.0.1-SNAPSHOT.jar
+```
+
+Para el catálogo, usa `SPRING_PROFILES_ACTIVE=catalog` y `SERVER_PORT=8081`; para pagos, `commerce` y `8082`.
+
+Ejemplo de los dos procesos workers (ejecuta cada bloque en una terminal diferente):
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = "worker"
+$env:SERVER_PORT = "8084"
+java -jar .\target\backend-skates-app-0.0.1-SNAPSHOT.jar
+```
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = "worker"
+$env:SERVER_PORT = "8085"
+java -jar .\target\backend-skates-app-0.0.1-SNAPSHOT.jar
+```
+
+En la segunda terminal worker se deben volver a definir las variables comunes. La pausa de un consumidor se almacena en MySQL y se comparte entre instancias conectadas a esa base. Pausar detiene nuevos sondeos; no cancela mensajes ya recibidos.
+
+#### Variables de entorno de SNS/SQS
+
+Define las variables en el entorno del proceso, no en archivos versionados. Usa el ARN y las URLs de los Outputs reales del stack y credenciales temporales vigentes:
+
+```powershell
+$env:MESSAGING_ENABLED = "true"
+$env:AWS_REGION = "us-east-1"
+$env:AWS_PROFILE = "academy"
+$env:SNS_TOPIC_ARN = "arn:aws:sns:us-east-1:<cuenta>:dev-skates-events"
+$env:SQS_ORDERS_QUEUE_URL = "<OrdersQueueUrl>"
+$env:SQS_ORDERS_DLQ_URL = "<OrdersDlqUrl>"
+$env:SQS_INVENTORY_QUEUE_URL = "<InventoryQueueUrl>"
+$env:SQS_INVENTORY_DLQ_URL = "<InventoryDlqUrl>"
+$env:SQS_NOTIFICATIONS_QUEUE_URL = "<NotificationsQueueUrl>"
+$env:SQS_NOTIFICATIONS_DLQ_URL = "<NotificationsDlqUrl>"
+$env:SQS_MAX_RECEIVE_COUNT = "5"
+```
+
+Todos los perfiles que publican o consumen necesitan las variables SNS/SQS apropiadas; el perfil `worker` requiere las seis URLs. Cada proceso también requiere `DB_URL`, `DB_USERNAME` y `DB_PASSWORD`. No guardes Access Key, Secret Key, Session Token ni contraseñas en el repositorio. En EC2, prefiere un instance profile IAM de mínimo privilegio a `AWS_PROFILE`; si usas un archivo de entorno fuera del repo para secretos, limita su acceso al usuario del servicio. Al ejecutar localmente en Windows, usa el perfil temporal de AWS Academy activo en `academy`.
+
+Para guardar localmente las URLs/ARN, completa el archivo `.env` de la carpeta del backend. Está excluido de Git. Spring Boot no carga `.env` automáticamente; desde PowerShell, en esa carpeta, puedes importar sus valores a la terminal actual así:
+
+```powershell
+Get-Content .env | ForEach-Object {
+    if ($_ -match '^\s*([^#=\s]+)\s*=(.*)$') {
+        $name = $Matches[1]
+        $value = $Matches[2].Trim()
+        if ($value) {
+            Set-Item -Path "Env:$name" -Value $value
+        }
+    }
+}
+```
+
+Después define también `DB_URL`, `DB_USERNAME` y `DB_PASSWORD` en esa terminal. Deja `MESSAGING_ENABLED=false` hasta completar los valores y cámbialo a `true` antes de iniciar el proceso. Repite la importación en cada terminal PowerShell. El `.env` no contiene ni debe contener claves AWS, tokens temporales ni contraseñas; usa el perfil `academy` autorizado o un rol IAM en EC2.
+
+El panel admin debe llamar al API Gateway/reverse proxy que dirija `/api/**` al proceso `admin` en el puerto 8083. Para acceso local directo, `VITE_API_URL` debe señalar una URL alcanzable por el navegador y compatible con HTTPS/CORS; no configures el frontend para llamar a `localhost` cuando se abra desde otro equipo. Registra el origen efectivo del frontend en `CORS_ALLOWED_ORIGINS` y usa el mismo `COGNITO_ISSUER_URI` y ambos App Client IDs. No publiques el puerto 8083 a Internet sin TLS y controles de red.
+
+La ejecución de varios perfiles o procesos no se ha verificado contra AWS en este entorno. Configura systemd en EC2 después de confirmar la topología, la red a RDS y los permisos IAM; crea una unidad separada por proceso y puerto, configura `SPRING_PROFILES_ACTIVE`/`SERVER_PORT` en la unidad y no guardes secretos en el repositorio.
 
 
 ### Empaquetar y ejecutar el JAR

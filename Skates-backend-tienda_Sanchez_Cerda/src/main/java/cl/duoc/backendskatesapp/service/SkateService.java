@@ -11,7 +11,7 @@ import cl.duoc.backendskatesapp.repository.SkateRepository;
 import java.util.List;
 
 @Service
-@Profile({"all", "catalog"})
+@Profile({"all", "catalog", "admin"})
 public class SkateService {
 
     private final SkateRepository skateRepository;

@@ -23,6 +23,9 @@ public class MessageProcessingService {
 
     @Transactional
     public boolean process(String consumerName, MessagingDomainEvent event) {
+        if (event == null) {
+            throw new NonRecoverableMessageException("Event body must not be null");
+        }
         if (event.eventId() == null || event.eventId().isBlank()) {
             throw new NonRecoverableMessageException("Event is missing eventId");
         }

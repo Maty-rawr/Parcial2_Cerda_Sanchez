@@ -47,4 +47,20 @@ public class ProcessedMessage {
         this.eventPayload = eventPayload;
         this.processedAt = Instant.now();
     }
+
+    public String getConsumerName() {
+        return consumerName;
+    }
+
+    public String getEventId() {
+        return eventId;
+    }
+
+    public String getEventType() {
+        return eventType;
+    }
+
+    public Instant getProcessedAt() {
+        return processedAt;
+    }
 }

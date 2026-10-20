@@ -16,7 +16,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/skate")
-@Profile({"all", "catalog"})
+@Profile({"all", "catalog", "admin"})
 public class SkateController {
 
     private final SkateService skateService;

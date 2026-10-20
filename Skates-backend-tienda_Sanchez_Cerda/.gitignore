@@ -36,3 +36,6 @@ build/
 /data/
 *.pem
 /infra/ngrok.local.yml
+.env
+.env.*
+!.env.example

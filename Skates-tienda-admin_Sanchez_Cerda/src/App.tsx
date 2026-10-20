@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { obtenerCatalogo, agregarSkate, actualizarSkate, eliminarSkate, type Skate } from './api'
 import { useCognitoAuth, tieneGrupoAdministrador } from './auth'
+import MessagingPanel from './MessagingPanel'
 import './App.css'
 
 type Pedido = {
@@ -22,7 +23,7 @@ const pedidosDemoIniciales: Pedido[] = [
 export default function App() {
   const auth = useCognitoAuth()
   const autenticado = auth.isAuthenticated && tieneGrupoAdministrador(auth.accessToken)
-  const [activeTab, setActiveTab] = useState<'products' | 'orders'>('products')
+  const [activeTab, setActiveTab] = useState<'products' | 'orders' | 'messaging'>('products')
   const [skates, setSkates] = useState<Skate[]>([])
   const [error, setError] = useState<string | null>(null)
   const [errorLogin, setErrorLogin] = useState<string | null>(null)
@@ -204,6 +205,26 @@ export default function App() {
           >
             📋 Órdenes y Pedidos
           </button>
+
+          <button
+            onClick={() => setActiveTab('messaging')}
+            style={{
+              padding: '14px 16px',
+              textAlign: 'left',
+              backgroundColor: activeTab === 'messaging' ? '#f97316' : 'transparent',
+              color: activeTab === 'messaging' ? '#fff' : '#94a3b8',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '15px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}
+          >
+            📨 Mensajería SNS/SQS
+          </button>
         </nav>
       </aside>
 
@@ -212,10 +233,10 @@ export default function App() {
         <header style={{ marginBottom: '30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: '28px', fontWeight: '700', color: '#f8fafc' }}>
-              {activeTab === 'products' ? 'Panel de Productos' : 'Panel de Órdenes'}
+              {activeTab === 'products' ? 'Panel de Productos' : activeTab === 'orders' ? 'Panel de Órdenes' : 'Panel de Mensajería'}
             </h1>
             <p style={{ margin: '5px 0 0 0', color: '#94a3b8', fontSize: '14px' }}>
-              Inventario en H2 y pedidos del negocio de skate.
+              Inventario, pedidos y mensajería asíncrona de la tienda.
             </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#1e293b', padding: '6px 14px', borderRadius: '20px', border: '1px solid #334155' }}>
@@ -304,7 +325,7 @@ export default function App() {
                 </table>
               </div>
             </div>
-          ) : (
+          ) : activeTab === 'orders' ? (
             <div>
               <h3 style={{ margin: '0 0 10px 0', fontSize: '18px', color: '#f8fafc' }}>Historial de Órdenes de Clientes</h3>
               <p style={{ color: '#94a3b8', fontSize: '14px', marginBottom: '24px' }}>Gestiona y actualiza el estado de las órdenes y envíos.</p>
@@ -341,6 +362,8 @@ export default function App() {
                 ))}
               </div>
             </div>
+          ) : (
+            <MessagingPanel />
           )}
         </section>
       </main>

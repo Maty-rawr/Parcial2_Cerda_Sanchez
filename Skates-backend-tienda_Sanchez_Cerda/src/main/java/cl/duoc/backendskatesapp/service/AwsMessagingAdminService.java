@@ -1,15 +1,20 @@
 package cl.duoc.backendskatesapp.service;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
 import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
+import cl.duoc.backendskatesapp.config.MessagingProperties;
 import cl.duoc.backendskatesapp.model.ConsumerControl;
+import cl.duoc.backendskatesapp.messaging.MessagingNames;
 import software.amazon.awssdk.services.sns.SnsClient;
 import software.amazon.awssdk.services.sns.model.CreateTopicResponse;
 import software.amazon.awssdk.services.sns.model.DeleteTopicRequest;
@@ -40,16 +45,22 @@ public class AwsMessagingAdminService {
     private final SqsClient sqsClient;
     private final ObjectMapper objectMapper;
     private final ConsumerControlService consumerControlService;
+    private final MessagingProperties properties;
 
     public AwsMessagingAdminService(
             SnsClient snsClient,
             SqsClient sqsClient,
             ObjectMapper objectMapper,
-            ConsumerControlService consumerControlService) {
+            ConsumerControlService consumerControlService,
+            MessagingProperties properties) {
         this.snsClient = snsClient;
         this.sqsClient = sqsClient;
         this.objectMapper = objectMapper;
         this.consumerControlService = consumerControlService;
+        this.properties = properties;
+        if (properties.getMaxReceiveCount() < 1) {
+            throw new IllegalArgumentException("SQS_MAX_RECEIVE_COUNT must be greater than zero");
+        }
     }
 
     public String createTopic(String name) {
@@ -90,7 +101,7 @@ public class AwsMessagingAdminService {
         String dlqArn = queueArn(dlqUrl);
         String redrivePolicy = json(Map.of(
                 "deadLetterTargetArn", dlqArn,
-                "maxReceiveCount", 5));
+                "maxReceiveCount", properties.getMaxReceiveCount()));
 
         return sqsClient.createQueue(CreateQueueRequest.builder()
                 .queueName(name)
@@ -200,14 +211,44 @@ public class AwsMessagingAdminService {
                 "Action", "sqs:SendMessage",
                 "Resource", queueArn,
                 "Condition", Map.of("ArnEquals", Map.of("aws:SourceArn", topicArn)));
+        String existingPolicy = sqsClient.getQueueAttributes(GetQueueAttributesRequest.builder()
+                .queueUrl(queueUrl)
+                .attributeNames(QueueAttributeName.POLICY)
+                .build()).attributesAsStrings().get(QueueAttributeName.POLICY.toString());
+        Map<String, Object> policy = existingPolicy == null || existingPolicy.isBlank()
+                ? new HashMap<>()
+                : readPolicy(existingPolicy);
+        List<Object> statements = statements(policy.get("Statement"));
+        if (!statements.contains(statement)) {
+            statements.add(statement);
+        }
+        policy.putIfAbsent("Version", "2012-10-17");
+        policy.put("Statement", statements);
         sqsClient.setQueueAttributes(SetQueueAttributesRequest.builder()
                 .queueUrl(queueUrl)
-                .attributes(Map.of(
-                        QueueAttributeName.POLICY,
-                        json(Map.of(
-                                "Version", "2012-10-17",
-                                "Statement", List.of(statement)))))
+                .attributes(Map.of(QueueAttributeName.POLICY, json(policy)))
                 .build());
+    }
+
+    private Map<String, Object> readPolicy(String policy) {
+        try {
+            return objectMapper.readValue(policy, new TypeReference<Map<String, Object>>() {});
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Could not parse the existing SQS queue policy", exception);
+        }
+    }
+
+    private List<Object> statements(Object value) {
+        if (value == null) {
+            return new ArrayList<>();
+        }
+        if (value instanceof List<?> existingStatements) {
+            return new ArrayList<>(existingStatements);
+        }
+        if (value instanceof Map<?, ?> existingStatement) {
+            return new ArrayList<>(List.of(existingStatement));
+        }
+        throw new IllegalStateException("The existing SQS queue policy has an invalid Statement value");
     }
 
     private String queueArn(String queueUrl) {
@@ -238,7 +279,10 @@ public class AwsMessagingAdminService {
     }
 
     private void validateConsumerName(String name) {
-        if (!List.of("orders", "inventory", "notifications").contains(name)) {
+        if (!List.of(
+                MessagingNames.ORDERS_CONSUMER,
+                MessagingNames.INVENTORY_CONSUMER,
+                MessagingNames.NOTIFICATIONS_CONSUMER).contains(name)) {
             throw new IllegalArgumentException("Unknown consumer: " + name);
         }
     }
