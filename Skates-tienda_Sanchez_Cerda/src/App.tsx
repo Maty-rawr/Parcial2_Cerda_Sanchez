@@ -81,6 +81,16 @@ function App() {
             setResultadoPago(`¡Pago realizado con éxito! Orden: ${data.buyOrder}. Stock actualizado.`);
             setCarrito([]); // Vacía el carrito localmente
             setMostrandoCarrito(true); // Abre el panel para mostrar el mensaje de éxito
+            void obtenerCatalogo()
+              .then((catalogoActualizado) => {
+                setSkates(catalogoActualizado);
+                setError(null);
+              })
+              .catch((catalogError: unknown) => {
+                setError(catalogError instanceof Error
+                  ? catalogError.message
+                  : "No se pudo actualizar el catálogo después del pago.");
+              });
           } else {
             setErrorPago(data.message || "La transacción fue rechazada.");
             setMostrandoCarrito(true);
