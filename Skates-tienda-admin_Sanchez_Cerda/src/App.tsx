@@ -272,7 +272,7 @@ export default function App() {
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                <h3 style={{ margin: 0, fontSize: '18px', color: '#f8fafc' }}>Inventario guardado en H2</h3>
+                <h3 style={{ margin: 0, fontSize: '18px', color: '#f8fafc' }}>Inventario conectado a MySQL</h3>
                 <button 
                   onClick={abrirModalCrear}
                   style={{ backgroundColor: '#f97316', color: '#fff', border: 'none', padding: '10px 18px', borderRadius: '8px', cursor: 'pointer', fontWeight: '600' }}
